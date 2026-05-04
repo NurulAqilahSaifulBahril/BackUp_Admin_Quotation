@@ -121,10 +121,10 @@ export async function getOutsourceManagementData() {
   const memberLookup = new Map(members.map((member) => [member.id, member]));
   const invalidRelationships = members.filter((member) => {
     if (!member.role) return Boolean(member.parent_user_id);
-    const requiredParentRole = expectedParentRole(member.role);
-    if (!requiredParentRole) return Boolean(member.parent_user_id);
-    if (!member.parent_user_id) return true;
-    return memberLookup.get(member.parent_user_id)?.role !== requiredParentRole;
+    const validParentRole = expectedParentRole(member.role);
+    if (!validParentRole) return Boolean(member.parent_user_id);
+    if (!member.parent_user_id) return member.role === "OSM";
+    return memberLookup.get(member.parent_user_id)?.role !== validParentRole;
   }).length;
 
   return {
@@ -169,11 +169,11 @@ export async function updateOutsourceRelationship(input: UpdateOutsourceRelation
   }
 
   let finalParentUserId: number | null = null;
-  const requiredParentRole = expectedParentRole(role);
+  const validParentRole = expectedParentRole(role);
 
-  if (requiredParentRole) {
-    if (!parentUserId) {
-      return { success: false, error: `${role} must report to a ${requiredParentRole}.` };
+  if (parentUserId) {
+    if (!validParentRole) {
+      return { success: false, error: `${role || "Unassigned users"} cannot have a parent.` };
     }
 
     const parent = await db.query.users.findFirst({
@@ -185,11 +185,15 @@ export async function updateOutsourceRelationship(input: UpdateOutsourceRelation
     }
 
     const parentRole = normalizeRole(parent.outsource_role);
-    if (parentRole !== requiredParentRole) {
-      return { success: false, error: `${role} must report to a ${requiredParentRole}.` };
+    if (parentRole !== validParentRole) {
+      return { success: false, error: `${role} must report to a ${validParentRole}.` };
     }
 
     finalParentUserId = parentUserId;
+  } else {
+    if (role === "OSM") {
+      return { success: false, error: `${role} must report to a ${validParentRole}.` };
+    }
   }
 
   const childRows = await db.query.users.findMany({

@@ -153,7 +153,7 @@ export default function OutsourceManagementPage() {
       }
     }
 
-    return members
+    const ogmGroups = members
       .filter((member) => member.role === "OGM")
       .map((ogm) => ({
         ogm,
@@ -162,6 +162,14 @@ export default function OutsourceManagementPage() {
           sales: salesByOum.get(oum.id) || [],
         })),
       }));
+    const topLevelUnits = members
+      .filter((member) => member.role === "OUM" && !member.parent_user_id)
+      .map((oum) => ({
+        oum,
+        sales: salesByOum.get(oum.id) || [],
+      }));
+
+    return { ogmGroups, topLevelUnits };
   }, [members]);
 
   const parentOptions = useMemo(() => {
@@ -297,66 +305,102 @@ export default function OutsourceManagementPage() {
               Array.from({ length: 3 }).map((_, index) => (
                 <div key={index} className="h-24 animate-pulse rounded-lg bg-secondary-100" />
               ))
-            ) : hierarchy.length === 0 ? (
+            ) : hierarchy.ogmGroups.length === 0 && hierarchy.topLevelUnits.length === 0 ? (
               <div className="rounded-lg border border-dashed border-secondary-300 p-8 text-center text-sm text-secondary-500">
-                No OGM assigned yet.
+                No OUM assigned yet.
               </div>
             ) : (
-              hierarchy.map(({ ogm, units }) => (
-                <div key={ogm.id} className={`rounded-lg border p-4 ${ROLE_META.OGM.panel}`}>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        {roleBadge(ogm.role)}
-                        <span className="text-sm font-semibold text-secondary-900 truncate">{ogm.name}</span>
-                      </div>
-                      <p className="mt-1 text-xs text-secondary-600">{downlineSummary(ogm)}</p>
-                    </div>
-                    <button type="button" onClick={() => openEdit(ogm)} className="btn-ghost px-3 py-1.5 text-xs">
-                      <Edit2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {units.length === 0 ? (
-                      <p className="rounded-md bg-white/70 px-3 py-2 text-xs text-secondary-500">No OUM under this OGM.</p>
-                    ) : (
-                      units.map(({ oum, sales }) => (
-                        <div key={oum.id} className={`rounded-lg border p-3 ${ROLE_META.OUM.panel}`}>
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                {roleBadge(oum.role)}
-                                <span className="truncate text-sm font-semibold text-secondary-900">{oum.name}</span>
-                              </div>
-                              <p className="mt-1 text-xs text-secondary-600">{sales.length} OSM</p>
-                            </div>
-                            <button type="button" onClick={() => openEdit(oum)} className="btn-ghost px-3 py-1.5 text-xs">
-                              <Edit2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            {sales.length === 0 ? (
-                              <p className="rounded-md bg-white/70 px-3 py-2 text-xs text-secondary-500 sm:col-span-2">No OSM under this OUM.</p>
-                            ) : (
-                              sales.map((osm) => (
-                                <button
-                                  key={osm.id}
-                                  type="button"
-                                  onClick={() => openEdit(osm)}
-                                  className="flex min-w-0 items-center gap-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-left hover:border-amber-300 hover:bg-amber-50"
-                                >
-                                  {roleBadge(osm.role)}
-                                  <span className="truncate text-xs font-semibold text-secondary-800">{osm.name}</span>
-                                </button>
-                              ))
-                            )}
-                          </div>
+              <>
+                {hierarchy.ogmGroups.map(({ ogm, units }) => (
+                  <div key={ogm.id} className={`rounded-lg border p-4 ${ROLE_META.OGM.panel}`}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          {roleBadge(ogm.role)}
+                          <span className="text-sm font-semibold text-secondary-900 truncate">{ogm.name}</span>
                         </div>
-                      ))
-                    )}
+                        <p className="mt-1 text-xs text-secondary-600">{downlineSummary(ogm)}</p>
+                      </div>
+                      <button type="button" onClick={() => openEdit(ogm)} className="btn-ghost px-3 py-1.5 text-xs">
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {units.length === 0 ? (
+                        <p className="rounded-md bg-white/70 px-3 py-2 text-xs text-secondary-500">No OUM under this OGM.</p>
+                      ) : (
+                        units.map(({ oum, sales }) => (
+                          <div key={oum.id} className={`rounded-lg border p-3 ${ROLE_META.OUM.panel}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  {roleBadge(oum.role)}
+                                  <span className="truncate text-sm font-semibold text-secondary-900">{oum.name}</span>
+                                </div>
+                                <p className="mt-1 text-xs text-secondary-600">{sales.length} OSM</p>
+                              </div>
+                              <button type="button" onClick={() => openEdit(oum)} className="btn-ghost px-3 py-1.5 text-xs">
+                                <Edit2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              {sales.length === 0 ? (
+                                <p className="rounded-md bg-white/70 px-3 py-2 text-xs text-secondary-500 sm:col-span-2">No OSM under this OUM.</p>
+                              ) : (
+                                sales.map((osm) => (
+                                  <button
+                                    key={osm.id}
+                                    type="button"
+                                    onClick={() => openEdit(osm)}
+                                    className="flex min-w-0 items-center gap-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-left hover:border-amber-300 hover:bg-amber-50"
+                                  >
+                                    {roleBadge(osm.role)}
+                                    <span className="truncate text-xs font-semibold text-secondary-800">{osm.name}</span>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                ))}
+
+                {hierarchy.topLevelUnits.map(({ oum, sales }) => (
+                  <div key={oum.id} className={`rounded-lg border p-4 ${ROLE_META.OUM.panel}`}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          {roleBadge(oum.role)}
+                          <span className="text-sm font-semibold text-secondary-900 truncate">{oum.name}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-secondary-600">{downlineSummary(oum)}</p>
+                      </div>
+                      <button type="button" onClick={() => openEdit(oum)} className="btn-ghost px-3 py-1.5 text-xs">
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {sales.length === 0 ? (
+                        <p className="rounded-md bg-white/70 px-3 py-2 text-xs text-secondary-500 sm:col-span-2">No OSM under this OUM.</p>
+                      ) : (
+                        sales.map((osm) => (
+                          <button
+                            key={osm.id}
+                            type="button"
+                            onClick={() => openEdit(osm)}
+                            className="flex min-w-0 items-center gap-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-left hover:border-amber-300 hover:bg-amber-50"
+                          >
+                            {roleBadge(osm.role)}
+                            <span className="truncate text-xs font-semibold text-secondary-800">{osm.name}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </>
             )}
           </div>
         </section>
@@ -519,7 +563,7 @@ export default function OutsourceManagementPage() {
                 >
                   <option value="">
                     {formRole === "OUM"
-                      ? "Select OGM"
+                      ? "Select OGM (Optional)"
                       : formRole === "OSM"
                         ? "Select OUM"
                         : "No parent for this role"}
