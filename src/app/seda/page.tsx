@@ -13,7 +13,9 @@ interface SedaRegistration {
   ic_no: string | null;
   email: string | null;
   customer_name: string | null;
-  agent_name: string | null;
+  agent_user_id: string | null;
+  agent_user_email: string | null;
+  agent_code: string | null;
   modified_date: string | null;
   updated_at: string | null;
   created_date: string | null;
@@ -44,20 +46,7 @@ export default function SedaListPage() {
 
   useEffect(() => {
     fetchData();
-    fetchAttentionCount();
   }, [search, activeTab]);
-
-  const fetchAttentionCount = async () => {
-    try {
-      const response = await fetch('/api/seda/attention-count');
-      if (response.ok) {
-        const data = await response.json();
-        setAttentionCount(data.count);
-      }
-    } catch (error) {
-      console.error("Error fetching attention count:", error);
-    }
-  };
 
   useEffect(() => {
     if (data.length > 0 && expandedGroups.size === 0) {
@@ -84,8 +73,9 @@ export default function SedaListPage() {
       const response = await fetch(`/api/seda/registrations?${params}`);
       if (!response.ok) throw new Error("Failed to fetch");
 
-      const result: SedaGroup[] = await response.json();
-      setData(result);
+      const result = await response.json();
+      setData(result.groups || []);
+      setAttentionCount(result.attentionCount || 0);
     } catch (error) {
       console.error("Error fetching SEDA registrations:", error);
       alert("Failed to load SEDA registrations. Please try again.");
@@ -232,7 +222,7 @@ export default function SedaListPage() {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
             <input
               type="text"
-              placeholder="Search by customer, address, IC number..."
+              placeholder="Search by customer, address, IC number, user ID, user email..."
               className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
@@ -301,6 +291,9 @@ export default function SedaListPage() {
                           <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                             Customer
                           </th>
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-56">
+                            Agent User
+                          </th>
                           <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-32">
                             Form Progress
                           </th>
@@ -345,6 +338,16 @@ export default function SedaListPage() {
                                 </div>
                                 <div className="text-xs text-slate-400 mt-1">
                                   {seda.ic_no || "No IC"}
+                                </div>
+                              </td>
+
+                              {/* Agent User */}
+                              <td className="px-6 py-4">
+                                <div className="text-sm text-slate-900 font-mono max-w-[14rem] truncate">
+                                  {seda.agent_user_id || "No user ID"}
+                                </div>
+                                <div className="text-xs text-slate-400 mt-1 max-w-[14rem] truncate">
+                                  {seda.agent_user_email || seda.agent_code || "No user email"}
                                 </div>
                               </td>
 
