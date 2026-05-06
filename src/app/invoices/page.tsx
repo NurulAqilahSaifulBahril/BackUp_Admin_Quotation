@@ -14,6 +14,9 @@ function InvoicesContent() {
   const [search, setSearch] = useState("");
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const pageSize = 50;
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -42,11 +45,14 @@ function InvoicesContent() {
     }
   }, [searchParams]);
 
-  async function fetchData() {
+  async function fetchData(p?: number) {
+    const currentPage = p ?? page;
     setLoading(true);
     try {
-      const data = await getInvoices(version, search, tab);
-      setInvoices(data);
+      const result = await getInvoices(version, search, tab, currentPage, pageSize);
+      setInvoices(result.data);
+      setTotal(result.total);
+      setPage(result.page);
     } catch (error) {
       console.error("Failed to fetch invoices:", error);
     } finally {
@@ -282,7 +288,7 @@ function InvoicesContent() {
             <div className="flex items-center gap-2 w-full md:w-auto">
               <button
                 type="button"
-                onClick={fetchData}
+                onClick={() => fetchData()}
                 className="btn-secondary flex items-center gap-2"
               >
                 <Filter className="w-4 h-4" />
@@ -459,21 +465,23 @@ function InvoicesContent() {
           <div className="flex items-center gap-2">
             <p className="text-sm text-secondary-600">
               Showing <span className="font-semibold text-secondary-900">{invoices.length}</span> of{" "}
-              <span className="font-semibold text-secondary-900">{invoices.length}</span> results
+              <span className="font-semibold text-secondary-900">{total}</span> results
             </p>
           </div>
           <div className="flex items-center gap-2">
             <button
-              disabled
+              disabled={page <= 1}
+              onClick={() => fetchData(page - 1)}
               className="p-2 rounded-lg border border-secondary-200 bg-white text-secondary-400 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-50 transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
             <span className="px-3 py-1.5 text-sm font-medium text-secondary-700 bg-white border border-secondary-200 rounded-lg">
-              1
+              {page}
             </span>
             <button
-              disabled
+              disabled={page * pageSize >= total}
+              onClick={() => fetchData(page + 1)}
               className="p-2 rounded-lg border border-secondary-200 bg-white text-secondary-400 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-50 transition-colors"
             >
               <ChevronRight className="h-4 w-4" />

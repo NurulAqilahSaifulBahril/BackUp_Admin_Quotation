@@ -10,7 +10,7 @@ import { logInvoiceEdit } from "@/lib/invoice-edit-logger";
 
 const PDF_API_URL = "https://pdf-gen-production-6c81.up.railway.app";
 
-export async function getInvoices(version: "v1" | "v2", search?: string, tab: "active" | "deleted" = "active") {
+export async function getInvoices(version: "v1" | "v2", search?: string, tab: "active" | "deleted" = "active", page: number = 1, pageSize: number = 50) {
   try {
     if (version === "v1") {
       const filters = [
@@ -29,6 +29,16 @@ export async function getInvoices(version: "v1" | "v2", search?: string, tab: "a
         ) as any);
       }
 
+      const whereClause = and(...filters);
+
+      const [{ count }] = await db.select({ count: sql<number>`count(*)` })
+        .from(invoices)
+        .leftJoin(users, eq(invoices.created_by, users.bubble_id))
+        .leftJoin(agents, eq(invoices.linked_agent, agents.bubble_id))
+        .where(whereClause);
+
+      const total = Number(count);
+
       const data = await db.select({
         id: invoices.id,
         invoice_id: invoices.invoice_id,
@@ -43,13 +53,38 @@ export async function getInvoices(version: "v1" | "v2", search?: string, tab: "a
         .from(invoices)
         .leftJoin(users, eq(invoices.created_by, users.bubble_id))
         .leftJoin(agents, eq(invoices.linked_agent, agents.bubble_id))
-        .where(and(...filters))
+        .where(whereClause)
         .orderBy(desc(invoices.id))
-        .limit(50);
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
 
-      return data;
+      return { data, total, page, pageSize };
     } else {
       // v2 - Modern Invoices (Consolidated)
+      const searchCondition = search ? sql`AND (
+        c.name ILIKE ${`%${search}%`}
+        OR i.invoice_number ILIKE ${`%${search}%`}
+        OR CAST(i.invoice_id AS TEXT) ILIKE ${`%${search}%`}
+        OR u.name ILIKE ${`%${search}%`}
+        OR u.email ILIKE ${`%${search}%`}
+        OR a.name ILIKE ${`%${search}%`}
+        OR a.email ILIKE ${`%${search}%`}
+        OR CAST(i.created_by AS TEXT) ILIKE ${`%${search}%`}
+      )` : sql``;
+
+      const countResult = await db.execute(sql`
+        SELECT COUNT(*) as count
+        FROM invoice i
+        LEFT JOIN customer c ON c.customer_id = i.linked_customer
+        LEFT JOIN "user" u ON u.bubble_id = i.created_by
+        LEFT JOIN agent a ON a.bubble_id = i.linked_agent
+        WHERE i.is_latest = true
+        AND COALESCE(i.is_deleted, false) = ${tab === 'active' ? false : true}
+        ${searchCondition}
+      `);
+      const total = Number(countResult.rows[0].count);
+
+      const offset = (page - 1) * pageSize;
       const data = await db.execute(sql`
         SELECT
           i.id,
@@ -68,18 +103,10 @@ export async function getInvoices(version: "v1" | "v2", search?: string, tab: "a
         LEFT JOIN agent a ON a.bubble_id = i.linked_agent
         WHERE i.is_latest = true
         AND COALESCE(i.is_deleted, false) = ${tab === 'active' ? false : true}
-        ${search ? sql`AND (
-          c.name ILIKE ${`%${search}%`}
-          OR i.invoice_number ILIKE ${`%${search}%`}
-          OR CAST(i.invoice_id AS TEXT) ILIKE ${`%${search}%`}
-          OR u.name ILIKE ${`%${search}%`}
-          OR u.email ILIKE ${`%${search}%`}
-          OR a.name ILIKE ${`%${search}%`}
-          OR a.email ILIKE ${`%${search}%`}
-          OR CAST(i.created_by AS TEXT) ILIKE ${`%${search}%`}
-        )` : sql``}
+        ${searchCondition}
         ORDER BY i.created_at DESC
-        LIMIT 50
+        LIMIT ${pageSize}
+        OFFSET ${offset}
       `);
 
       const processedData = data.rows.map((row: any) => ({
@@ -95,7 +122,7 @@ export async function getInvoices(version: "v1" | "v2", search?: string, tab: "a
         agent_name: row.agent_name || "N/A"
       }));
 
-      return processedData;
+      return { data: processedData, total, page, pageSize };
     }
   } catch (error) {
     console.error("Database error in getInvoices:", error);
