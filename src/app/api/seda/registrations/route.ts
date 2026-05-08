@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
           eq(invoices.linked_seda_registration, sedaRegistration.bubble_id),
           sql`${invoices.bubble_id} = ANY(${sedaRegistration.linked_invoice})`
         ))
-        .leftJoin(customers, eq(sedaRegistration.linked_customer, customers.customer_id))
+        .leftJoin(customers, eq(invoices.linked_customer, customers.customer_id))
         .leftJoin(users, eq(sedaRegistration.agent, users.bubble_id))
         .where(gte(invoices.percent_of_total_amount, "4"))
         .orderBy(desc(sedaRegistration.created_date))

@@ -63,7 +63,6 @@ export {
 // Link Restoration Operations
 export {
   restoreInvoiceSedaLinks,
-  patchSedaCustomerLinks,
   syncInvoiceItemLinks
 } from './link-restoration';
 

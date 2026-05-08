@@ -1,13 +1,41 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { invoices, sedaRegistration, customers, agents } from "@/db/schema";
+import { invoices, sedaRegistration, customers, agents, invoice_audit_log } from "@/db/schema";
 import { eq, sql, and, desc, or, ilike, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { resolveActor } from "@/lib/invoice-edit-logger";
 import fs from "fs";
 import path from "path";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
+
+async function logDrawingAudit(sedaBubbleId: string, actionType: 'upload' | 'delete', fileType: string, fileUrl: string) {
+  try {
+    const invoice = await db.query.invoices.findFirst({
+      where: eq(invoices.linked_seda_registration, sedaBubbleId),
+      columns: { id: true, bubble_id: true, invoice_number: true },
+    });
+    if (!invoice) return;
+    const actor = await resolveActor();
+    await db.insert(invoice_audit_log).values({
+      invoice_id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      entity_type: 'drawing',
+      entity_id: invoice.bubble_id,
+      action_type: actionType,
+      changes: [{ field: fileType, before: actionType === 'delete' ? fileUrl : null, after: actionType === 'upload' ? fileUrl : null }],
+      actor_name: actor.name,
+      actor_phone: actor.phone,
+      actor_user_id: actor.userId,
+      actor_role: actor.role,
+      source_app: 'ee-admin',
+      edited_at: new Date(),
+    });
+  } catch (e) {
+    console.error('Failed to write drawing audit log:', e);
+  }
+}
 
 const STORAGE_ROOT = "/storage";
 const FILE_BASE_URL = process.env.FILE_BASE_URL || "https://admin.atap.solar";
@@ -226,6 +254,8 @@ export async function uploadEngineeringFile(
       .set({ [fieldName]: updatedArray })
       .where(eq(sedaRegistration.bubble_id, sedaBubbleId));
 
+    await logDrawingAudit(sedaBubbleId, 'upload', fileType, fileUrl);
+
     revalidatePath("/engineering");
     return { success: true, url: fileUrl };
   } catch (error) {
@@ -269,6 +299,8 @@ export async function deleteEngineeringFile(
       .update(sedaRegistration)
       .set({ [fieldName]: updatedArray })
       .where(eq(sedaRegistration.bubble_id, sedaBubbleId));
+
+    await logDrawingAudit(sedaBubbleId, 'delete', fileType, fileUrl);
 
     revalidatePath("/engineering");
     return { success: true };

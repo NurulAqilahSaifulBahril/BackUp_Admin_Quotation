@@ -558,6 +558,29 @@ export const hybridInverterUpgradeRules = pgTable('hybrid_inverter_upgrade_rule'
   updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// Invoice Audit Log Table - Shared audit table used by both EE-Admin and Agent OS
+export const invoice_audit_log = pgTable('invoice_audit_log', {
+  id: serial('id').primaryKey(),
+  invoice_id: integer('invoice_id'),
+  invoice_number: text('invoice_number'),
+  entity_type: text('entity_type').notNull(),
+  entity_id: text('entity_id'),
+  action_type: text('action_type').notNull(),
+  changes: jsonb('changes').notNull().default([]),
+  row_old: jsonb('row_old'),
+  row_new: jsonb('row_new'),
+  actor_user_id: text('actor_user_id'),
+  actor_phone: text('actor_phone'),
+  actor_name: text('actor_name'),
+  actor_role: text('actor_role'),
+  source_app: text('source_app'),
+  db_user: text('db_user'),
+  application_name: text('application_name'),
+  client_addr: text('client_addr'),
+  txid: text('txid'),
+  edited_at: timestamp('edited_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // App Settings Table
 export const app_settings = pgTable('app_settings', {
   id: serial('id').primaryKey(),

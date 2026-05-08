@@ -1,8 +1,10 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { sql } from "drizzle-orm";
+import { invoices, invoice_audit_log } from "@/db/schema";
+import { sql, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { resolveActor } from "@/lib/invoice-edit-logger";
 import fs from "fs";
 import path from "path";
 
@@ -73,6 +75,32 @@ export async function uploadAttachment(
         )
         WHERE bubble_id = ${sedaBubbleId}
       `);
+        }
+
+        try {
+            const invoice = await db.query.invoices.findFirst({
+                where: eq(invoices.bubble_id, invoiceBubbleId),
+                columns: { id: true, invoice_number: true },
+            });
+            if (invoice) {
+                const actor = await resolveActor();
+                await db.insert(invoice_audit_log).values({
+                    invoice_id: invoice.id,
+                    invoice_number: invoice.invoice_number,
+                    entity_type: 'drawing',
+                    entity_id: invoiceBubbleId,
+                    action_type: 'upload',
+                    changes: [{ field: uploadType, before: null, after: fileUrl }],
+                    actor_name: actor.name,
+                    actor_phone: actor.phone,
+                    actor_user_id: actor.userId,
+                    actor_role: actor.role,
+                    source_app: 'ee-admin',
+                    edited_at: new Date(),
+                });
+            }
+        } catch (e) {
+            console.error('[engineering-v2/upload] audit log failed:', e);
         }
 
         revalidatePath("/engineering-v2");

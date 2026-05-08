@@ -1,6 +1,45 @@
 import { db } from "@/lib/db";
-import { invoice_edit_history } from "@/db/schema";
+import { invoice_audit_log, users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { getUser } from "@/lib/auth";
+
+/**
+ * Resolve the display name for the current user.
+ * JWT may have an empty name — fall back to DB lookup by userId.
+ */
+export async function resolveActor(): Promise<{
+  name: string;
+  phone: string;
+  userId: string;
+  role: string;
+}> {
+  try {
+    const user = await getUser();
+    if (!user) return { name: 'System', phone: '', userId: 'system', role: 'system' };
+
+    let name = user.name?.trim() || '';
+
+    // JWT name is blank — look up in users table by userId (integer id)
+    if (!name && user.userId && user.userId !== 'system') {
+      try {
+        const dbUser = await db.query.users.findFirst({
+          where: eq(users.id, parseInt(user.userId, 10)),
+          columns: { name: true },
+        });
+        if (dbUser?.name) name = dbUser.name;
+      } catch (_) {}
+    }
+
+    return {
+      name: name || 'Unknown',
+      phone: user.phone || '',
+      userId: user.userId || '',
+      role: user.role || '',
+    };
+  } catch (_) {
+    return { name: 'System', phone: '', userId: 'system', role: 'system' };
+  }
+}
 
 export type InvoiceEditLogParams = {
   invoiceId: number;
@@ -15,22 +54,11 @@ export type InvoiceEditLogParams = {
 
 export async function logInvoiceEdit(params: InvoiceEditLogParams) {
   try {
-    let editorName = "System";
-    let editorId = "system";
-    let editorRole = "system";
-    let editorPhone = "";
-
-    try {
-      const user = await getUser();
-      if (user) {
-        editorName = user.name || "Unknown";
-        editorId = user.userId || "unknown";
-        editorRole = user.role || "unknown";
-        editorPhone = user.phone || "";
-      }
-    } catch (e) {
-      // Ignore auth errors during logging
-    }
+    const actor = await resolveActor();
+    const editorName = actor.name;
+    const editorId = actor.userId;
+    const editorRole = actor.role;
+    const editorPhone = actor.phone;
 
     // 2. Calculate the diff
     const changes: Array<{ field: string; before: any; after: any }> = [];
@@ -72,17 +100,18 @@ export async function logInvoiceEdit(params: InvoiceEditLogParams) {
 
     // Only log if there are actual changes or it's a create/delete action
     if (changes.length > 0 || params.actionType !== 'update') {
-        await db.insert(invoice_edit_history).values({
+        await db.insert(invoice_audit_log).values({
             invoice_id: params.invoiceId,
             invoice_number: params.invoiceNumber,
             entity_type: params.entityType,
             entity_id: params.entityId,
             action_type: params.actionType,
-            changes: changes, // Drizzle handles JSONB serialization
-            edited_by_name: editorName,
-            edited_by_user_id: editorId,
-            edited_by_role: editorRole,
-            edited_by_phone: editorPhone,
+            changes: changes,
+            actor_name: editorName,
+            actor_user_id: editorId,
+            actor_role: editorRole,
+            actor_phone: editorPhone,
+            source_app: 'ee-admin',
             edited_at: new Date(),
         });
     }

@@ -20,7 +20,6 @@ import { revalidatePath } from "next/cache";
 import { logSyncActivity } from "@/lib/logger";
 import { syncCompleteInvoicePackage } from "@/lib/bubble";
 import { restoreInvoiceSedaLinks } from "./link-restoration";
-import { patchSedaCustomerLinks } from "./link-restoration";
 
 /**
  * ============================================================================
@@ -43,13 +42,11 @@ import { patchSedaCustomerLinks } from "./link-restoration";
  * EXECUTION ORDER (Step-by-step):
  * 1. Call syncCompleteInvoicePackage to fetch and store data
  * 2. On success, restore Invoice→SEDA links from SEDA.linked_invoice array
- * 3. Patch SEDA→Customer links from Invoice.linked_customer
- * 4. Revalidate Next.js cached paths
- * 5. Return sync results
+ * 3. Revalidate Next.js cached paths
+ * 4. Return sync results
  *
  * AUTO-PATCHES (Why we patch after sync):
  * - Patch 1 (Invoice→SEDA): SEDA has linked_invoice array but invoice.linked_seda_registration was missing
- * - Patch 2 (SEDA→Customer): SEDA.linked_customer was not populated from invoice's customer
  *
  * EDGE CASES:
  * - No invoices in date range → Returns success with 0 synced
@@ -62,7 +59,7 @@ import { patchSedaCustomerLinks } from "./link-restoration";
  * - Calls revalidatePath() to refresh Next.js cache
  *
  * DEPENDENCIES:
- * - Requires: syncCompleteInvoicePackage(), restoreInvoiceSedaLinks(), patchSedaCustomerLinks()
+ * - Requires: syncCompleteInvoicePackage(), restoreInvoiceSedaLinks()
  * - Used by: src/app/sync/page.tsx (Manual Sync button)
  */
 export async function runManualSync(dateFrom?: string, dateTo?: string, syncFiles = false, sessionId?: string) {
@@ -80,10 +77,6 @@ export async function runManualSync(dateFrom?: string, dateTo?: string, syncFile
       // Patch 1: Restore Invoice→SEDA links from SEDA.linked_invoice array
       const invoiceLinkResult = await restoreInvoiceSedaLinks();
       logSyncActivity(`Invoice→SEDA links restored: ${invoiceLinkResult.linked || 0} linked`, 'INFO');
-
-      // Patch 2: Fix SEDA→Customer links from Invoice.linked_customer
-      const sedaCustomerResult = await patchSedaCustomerLinks();
-      logSyncActivity(`SEDA→Customer links patched: ${sedaCustomerResult.patched || 0} patched`, 'INFO');
     } else {
       logSyncActivity(`Manual Sync FAILED: ${result.error}`, 'ERROR');
     }

@@ -17,7 +17,6 @@
 import { revalidatePath } from "next/cache";
 import { logSyncActivity } from "@/lib/logger";
 import { restoreInvoiceSedaLinks } from "./link-restoration";
-import { patchSedaCustomerLinks } from "./link-restoration";
 
 /**
  * ============================================================================
@@ -45,13 +44,11 @@ import { patchSedaCustomerLinks } from "./link-restoration";
  * 2. Fetch SEDA registrations from Bubble within date range
  * 3. Upsert to PostgreSQL (bubble_id as conflict key)
  * 4. On success, restore Invoice→SEDA links from SEDA.linked_invoice array
- * 5. Patch SEDA→Customer links from Invoice.linked_customer
- * 6. Revalidate Next.js cached paths
- * 7. Return sync results
+ * 5. Revalidate Next.js cached paths
+ * 6. Return sync results
  *
  * AUTO-PATCHES (Why we patch after sync):
  * - Patch 1 (Invoice→SEDA): SEDA has linked_invoice array but invoice.linked_seda_registration may be missing
- * - Patch 2 (SEDA→Customer): SEDA.linked_customer may not be populated
  *
  * EDGE CASES:
  * - No SEDAs in date range → Returns success with syncedSedas: 0
@@ -83,10 +80,6 @@ export async function runSedaOnlySync(dateFrom: string, dateTo?: string) {
       // Patch 1: Restore Invoice→SEDA links from SEDA.linked_invoice array
       const invoiceLinkResult = await restoreInvoiceSedaLinks();
       logSyncActivity(`Invoice→SEDA links restored: ${invoiceLinkResult.linked || 0} linked`, 'INFO');
-
-      // Patch 2: Fix SEDA→Customer links from Invoice.linked_customer
-      const sedaCustomerResult = await patchSedaCustomerLinks();
-      logSyncActivity(`SEDA→Customer links patched: ${sedaCustomerResult.patched || 0} patched`, 'INFO');
     } else {
       logSyncActivity(`SEDA-Only Sync FAILED: ${result.error}`, 'ERROR');
     }

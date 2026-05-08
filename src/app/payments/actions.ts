@@ -1,11 +1,50 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { payments, submitted_payments, agents, customers, invoices, invoice_templates, users, invoice_items, vouchers } from "@/db/schema";
+import { payments, submitted_payments, agents, customers, invoices, invoice_templates, users, invoice_items, vouchers, invoice_audit_log } from "@/db/schema";
 import { ilike, or, desc, eq, and, sql, inArray, isNull, isNotNull, gte, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { syncPaymentsFromBubble } from "@/lib/bubble";
 import { calculateEppCost, getEppRate } from "@/lib/epp-rates";
+import { resolveActor } from "@/lib/invoice-edit-logger";
+
+async function logPaymentAudit({
+  linkedInvoice,
+  paymentBubbleId,
+  actionType,
+  changes,
+}: {
+  linkedInvoice: string | null | undefined;
+  paymentBubbleId: string | null | undefined;
+  actionType: string;
+  changes: Array<{ field: string; before: any; after: any }>;
+}) {
+  if (!linkedInvoice || changes.length === 0) return;
+  try {
+    const invoice = await db.query.invoices.findFirst({
+      where: eq(invoices.bubble_id, linkedInvoice),
+      columns: { id: true, invoice_number: true },
+    });
+    if (!invoice) return;
+    const actor = await resolveActor();
+    await db.insert(invoice_audit_log).values({
+      invoice_id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      entity_type: 'payment',
+      entity_id: paymentBubbleId ?? null,
+      action_type: actionType,
+      changes,
+      actor_name: actor.name,
+      actor_phone: actor.phone,
+      actor_user_id: actor.userId,
+      actor_role: actor.role,
+      source_app: 'ee-admin',
+      edited_at: new Date(),
+    });
+  } catch (e) {
+    console.error('Failed to write payment audit log:', e);
+  }
+}
 
 export async function triggerPaymentSync() {
   const result = await syncPaymentsFromBubble();
@@ -602,6 +641,19 @@ export async function verifyPayment(submittedPaymentId: number, adminId: string)
       await recalculateInvoicePaymentStatus(p.linked_invoice, adminId);
     }
 
+    if (p.linked_invoice && p.bubble_id) {
+      await logPaymentAudit({
+        linkedInvoice: p.linked_invoice,
+        paymentBubbleId: p.bubble_id,
+        actionType: 'verify',
+        changes: [
+          { field: 'status', before: 'pending', after: 'verified' },
+          { field: 'amount', before: null, after: p.amount },
+          { field: 'payment_method', before: null, after: p.payment_method_v2 ?? p.payment_method },
+        ],
+      });
+    }
+
     revalidatePath("/payments");
     return { success: true };
   } catch (error) {
@@ -777,6 +829,16 @@ export async function updateVerifiedPayment(id: number, updates: UpdatePaymentPa
       })
       .where(eq(payments.id, id));
 
+    await logPaymentAudit({
+      linkedInvoice: current.linked_invoice,
+      paymentBubbleId: current.bubble_id,
+      actionType: 'update',
+      changes: changes.map((c) => {
+        const match = c.match(/changed (.+?) from (.+?) to (.+)/);
+        return match ? { field: match[1], before: match[2], after: match[3] } : { field: 'payment', before: null, after: c };
+      }),
+    });
+
     revalidatePath("/payments");
     return { success: true, message: "Payment updated successfully" };
   } catch (error) {
@@ -828,6 +890,16 @@ export async function updateSubmittedPayment(id: number, updates: UpdatePaymentP
       })
       .where(eq(submitted_payments.id, id));
 
+    await logPaymentAudit({
+      linkedInvoice: current.linked_invoice,
+      paymentBubbleId: current.bubble_id,
+      actionType: 'update',
+      changes: changes.map((c) => {
+        const match = c.match(/changed (.+?) from (.+?) to (.+)/);
+        return match ? { field: match[1], before: match[2], after: match[3] } : { field: 'payment', before: null, after: c };
+      }),
+    });
+
     revalidatePath("/payments");
     return { success: true, message: "Submitted payment updated successfully" };
   } catch (error) {
@@ -855,6 +927,13 @@ export async function softDeleteSubmittedPayment(id: number, user: string) {
         updated_at: new Date()
       })
       .where(eq(submitted_payments.id, id));
+
+    await logPaymentAudit({
+      linkedInvoice: current.linked_invoice,
+      paymentBubbleId: current.bubble_id,
+      actionType: 'delete',
+      changes: [{ field: 'status', before: current.status, after: 'deleted' }],
+    });
 
     revalidatePath("/payments");
     return { success: true };

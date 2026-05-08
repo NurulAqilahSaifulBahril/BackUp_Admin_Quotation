@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { invoices, agents, users, invoice_templates, customers, payments, invoice_items, invoice_edit_history, packages } from "@/db/schema";
+import { invoices, agents, users, invoice_templates, customers, payments, invoice_items, invoice_edit_history, invoice_audit_log, packages } from "@/db/schema";
 import { ilike, or, sql, desc, eq, and, inArray, gte, lte } from "drizzle-orm";
 import { getInvoiceHtml } from "@/lib/invoice-renderer";
 import { revalidatePath } from "next/cache";
@@ -724,11 +724,27 @@ export async function getAgentsForSelection() {
 
 export async function getInvoiceEditHistory(invoiceId: number) {
   try {
-    const history = await db
+    const rows = await db
       .select()
-      .from(invoice_edit_history)
-      .where(eq(invoice_edit_history.invoice_id, invoiceId))
-      .orderBy(desc(invoice_edit_history.edited_at));
+      .from(invoice_audit_log)
+      .where(eq(invoice_audit_log.invoice_id, invoiceId))
+      .orderBy(desc(invoice_audit_log.edited_at));
+
+    const history = rows.map((row) => ({
+      id: row.id,
+      invoice_id: row.invoice_id,
+      invoice_number: row.invoice_number,
+      entity_type: row.entity_type,
+      entity_id: row.entity_id,
+      action_type: row.action_type,
+      changes: row.changes,
+      edited_by_name: row.actor_name,
+      edited_by_phone: row.actor_phone,
+      edited_by_user_id: row.actor_user_id,
+      edited_by_role: row.actor_role,
+      source_app: row.source_app,
+      edited_at: row.edited_at,
+    }));
 
     return { success: true, history };
   } catch (error) {

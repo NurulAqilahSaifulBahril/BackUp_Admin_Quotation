@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { sedaRegistration, customers } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { sedaRegistration, customers, invoices } from "@/db/schema";
+import { eq, or, sql } from "drizzle-orm";
 
 const SEDA_MANAGER_API = "https://seda-manager-production.up.railway.app";
 const TEST_PROFILE_MYKAD_PATTERN = "02020201";
@@ -64,7 +64,8 @@ export async function POST(
   try {
     const { bubble_id } = await params;
 
-    // 1. Get the seda_registration record with customer data
+    // 1. Get the seda_registration record with customer data via invoice
+    // Flow: SEDA <- invoice.linked_seda_registration -> invoice.linked_customer -> customer
     const records = await db
       .select({
         seda: sedaRegistration,
@@ -73,7 +74,8 @@ export async function POST(
         customer_postcode: customers.postcode,
       })
       .from(sedaRegistration)
-      .leftJoin(customers, eq(sedaRegistration.linked_customer, customers.customer_id))
+      .leftJoin(invoices, or(eq(invoices.linked_seda_registration, sedaRegistration.bubble_id), sql`${invoices.bubble_id} = ANY(${sedaRegistration.linked_invoice})`))
+      .leftJoin(customers, eq(invoices.linked_customer, customers.customer_id))
       .where(eq(sedaRegistration.bubble_id, bubble_id))
       .limit(1);
 

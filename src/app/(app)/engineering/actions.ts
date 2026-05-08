@@ -1,0 +1,330 @@
+"use server";
+
+import { db } from "@/lib/db";
+import { invoices, sedaRegistration, customers, agents, invoice_audit_log } from "@/db/schema";
+import { eq, sql, and, desc, or, ilike, inArray } from "drizzle-orm";
+import { getUser } from "@/lib/auth";
+import { revalidatePath } from "next/cache";
+import fs from "fs";
+import path from "path";
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
+
+/**
+ * Resolve invoice from seda bubble_id and write a drawing event to invoice_audit_log.
+ */
+async function logDrawingAudit({
+  sedaBubbleId,
+  actionType,
+  fileType,
+  fileUrl,
+}: {
+  sedaBubbleId: string;
+  actionType: 'upload' | 'delete';
+  fileType: string;
+  fileUrl: string;
+}) {
+  try {
+    const invoice = await db.query.invoices.findFirst({
+      where: eq(invoices.linked_seda_registration, sedaBubbleId),
+      columns: { id: true, bubble_id: true, invoice_number: true },
+    });
+    if (!invoice) return;
+
+    let actor: { name?: string; phone?: string; userId?: string; role?: string } = {};
+    try {
+      const user = await getUser();
+      if (user) actor = { name: user.name || undefined, phone: user.phone || undefined, userId: user.userId || undefined, role: user.role || undefined };
+    } catch (_) {}
+
+    await db.insert(invoice_audit_log).values({
+      invoice_id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      entity_type: 'drawing',
+      entity_id: invoice.bubble_id,
+      action_type: actionType,
+      changes: [{ field: fileType, before: actionType === 'delete' ? fileUrl : null, after: actionType === 'upload' ? fileUrl : null }],
+      actor_name: actor.name ?? null,
+      actor_phone: actor.phone ?? null,
+      actor_user_id: actor.userId ?? null,
+      actor_role: actor.role ?? null,
+      source_app: 'ee-admin',
+      edited_at: new Date(),
+    });
+  } catch (e) {
+    console.error('Failed to write drawing audit log:', e);
+  }
+}
+
+const STORAGE_ROOT = "/storage";
+const FILE_BASE_URL = process.env.FILE_BASE_URL || "https://admin.atap.solar";
+
+function normalizeUrlArray(values: string[] | null | undefined): string[] {
+  return (values || []).filter((value): value is string => Boolean(value));
+}
+
+function mergeUniqueUrls(...groups: Array<string[] | null | undefined>): string[] {
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const url of normalizeUrlArray(group)) {
+      seen.add(url);
+    }
+  }
+  return [...seen];
+}
+
+/**
+ * Fetch invoices with engineering-related data
+ */
+export async function getEngineeringInvoices(search?: string) {
+  try {
+    let whereCondition = and(
+      sql`${invoices.status} != 'deleted'`,
+      eq(invoices.is_latest, true)
+    )!;
+
+    if (search) {
+      whereCondition = and(
+        whereCondition,
+        or(
+          ilike(invoices.invoice_number, `%${search}%`),
+          ilike(customers.name, `%${search}%`),
+          ilike(agents.name, `%${search}%`),
+          ilike(sedaRegistration.installation_address, `%${search}%`)
+        )
+      )!;
+    }
+
+    const results = await db
+      .select({
+        id: invoices.id,
+        bubble_id: invoices.bubble_id,
+        share_token: invoices.share_token,
+        invoice_number: invoices.invoice_number,
+        total_amount: invoices.total_amount,
+        invoice_date: invoices.invoice_date,
+        status: invoices.status,
+        customer_name: customers.name,
+        agent_name: agents.name,
+        address: sedaRegistration.installation_address,
+        seda_bubble_id: sedaRegistration.bubble_id,
+        invoice_linked_roof_image: invoices.linked_roof_image,
+        invoice_pv_system_drawing: invoices.pv_system_drawing,
+        seda_roof_images: sedaRegistration.roof_images,
+        seda_drawing_pdf_system: sedaRegistration.drawing_pdf_system,
+        seda_drawing_engineering_seda_pdf: sedaRegistration.drawing_engineering_seda_pdf,
+      })
+      .from(invoices)
+      .leftJoin(sedaRegistration, eq(invoices.linked_seda_registration, sedaRegistration.bubble_id))
+      .leftJoin(customers, eq(invoices.linked_customer, customers.customer_id))
+      .leftJoin(agents, eq(invoices.linked_agent, agents.bubble_id))
+      .where(whereCondition)
+      .orderBy(desc(invoices.created_at))
+      .limit(200);
+
+    return results.map((row) => ({
+      ...row,
+      systemDrawingCount: mergeUniqueUrls(row.invoice_pv_system_drawing, row.seda_drawing_pdf_system).length,
+      engineeringDrawingCount: normalizeUrlArray(row.seda_drawing_engineering_seda_pdf).length,
+      roofImageCount: mergeUniqueUrls(row.invoice_linked_roof_image, row.seda_roof_images).length,
+    }));
+  } catch (error) {
+    console.error("Error fetching engineering invoices:", error);
+    throw new Error("Failed to fetch engineering data");
+  }
+}
+
+/**
+ * Fetch invoices with active engineering/system drawing tags from chat
+ */
+export async function getInvoicesWithDrawingTags(search?: string) {
+  try {
+    // Get invoice IDs with active engineering tags
+    const taggedInvoicesResult = await db.execute(sql`
+      SELECT DISTINCT ct.invoice_id
+      FROM chat_thread ct
+      INNER JOIN chat_message cm ON ct.id = cm.thread_id
+      WHERE cm.message_type = 'tag'
+        AND cm.tag_role = 'engineering'
+        AND cm.is_tag_active = true
+    `);
+
+    const invoiceIds = taggedInvoicesResult.rows.map((r: any) => r.invoice_id).filter(Boolean);
+
+    if (invoiceIds.length === 0) {
+      return [];
+    }
+
+    // Build where condition
+    let whereCondition = and(
+      sql`${invoices.status} != 'deleted'`,
+      eq(invoices.is_latest, true),
+      inArray(invoices.bubble_id, invoiceIds)
+    )!;
+
+    if (search) {
+      whereCondition = and(
+        whereCondition,
+        or(
+          ilike(invoices.invoice_number, `%${search}%`),
+          ilike(customers.name, `%${search}%`),
+          ilike(agents.name, `%${search}%`),
+          ilike(sedaRegistration.installation_address, `%${search}%`)
+        )
+      )!;
+    }
+
+    const results = await db
+      .select({
+        id: invoices.id,
+        bubble_id: invoices.bubble_id,
+        share_token: invoices.share_token,
+        invoice_number: invoices.invoice_number,
+        total_amount: invoices.total_amount,
+        invoice_date: invoices.invoice_date,
+        status: invoices.status,
+        customer_name: customers.name,
+        agent_name: agents.name,
+        address: sedaRegistration.installation_address,
+        seda_bubble_id: sedaRegistration.bubble_id,
+        invoice_linked_roof_image: invoices.linked_roof_image,
+        invoice_pv_system_drawing: invoices.pv_system_drawing,
+        seda_roof_images: sedaRegistration.roof_images,
+        seda_drawing_pdf_system: sedaRegistration.drawing_pdf_system,
+        seda_drawing_engineering_seda_pdf: sedaRegistration.drawing_engineering_seda_pdf,
+      })
+      .from(invoices)
+      .leftJoin(sedaRegistration, eq(invoices.linked_seda_registration, sedaRegistration.bubble_id))
+      .leftJoin(customers, eq(invoices.linked_customer, customers.customer_id))
+      .leftJoin(agents, eq(invoices.linked_agent, agents.bubble_id))
+      .where(whereCondition)
+      .orderBy(desc(invoices.created_at))
+      .limit(200);
+
+    return results.map((row) => ({
+      ...row,
+      systemDrawingCount: mergeUniqueUrls(row.invoice_pv_system_drawing, row.seda_drawing_pdf_system).length,
+      engineeringDrawingCount: normalizeUrlArray(row.seda_drawing_engineering_seda_pdf).length,
+      roofImageCount: mergeUniqueUrls(row.invoice_linked_roof_image, row.seda_roof_images).length,
+    }));
+  } catch (error) {
+    console.error("Error fetching invoices with drawing tags:", error);
+    return [];
+  }
+}
+
+/**
+ * Upload a file for engineering/drawing purposes
+ */
+export async function uploadEngineeringFile(
+  sedaBubbleId: string,
+  formData: FormData,
+  fileType: "system" | "engineering" | "roof"
+) {
+  const file = formData.get("file") as File;
+  if (!file) throw new Error("No file uploaded");
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const filename = file.name;
+  const subfolder = `engineering/${fileType}`;
+
+  try {
+    // Ensure directory exists
+    const targetDir = path.join(STORAGE_ROOT, subfolder);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    // Sanitize filename (basic)
+    const sanitizedFilename = `${Date.now()}-${filename.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+    const localPath = path.join(targetDir, sanitizedFilename);
+
+    // Save file
+    fs.writeFileSync(localPath, buffer);
+
+    // Generate URL
+    const fileUrl = `${FILE_BASE_URL}/api/files/${subfolder}/${sanitizedFilename}`;
+
+    // Update database
+    const seda = await db.query.sedaRegistration.findFirst({
+      where: eq(sedaRegistration.bubble_id, sedaBubbleId),
+    });
+
+    if (!seda) throw new Error("SEDA registration not found");
+
+    let fieldName: keyof typeof sedaRegistration;
+    let currentArray: string[] = [];
+
+    if (fileType === "system") {
+      fieldName = "drawing_pdf_system";
+      currentArray = seda.drawing_pdf_system || [];
+    } else if (fileType === "engineering") {
+      fieldName = "drawing_engineering_seda_pdf";
+      currentArray = seda.drawing_engineering_seda_pdf || [];
+    } else {
+      fieldName = "roof_images";
+      currentArray = seda.roof_images || [];
+    }
+
+    const updatedArray = [...currentArray, fileUrl];
+
+    await db
+      .update(sedaRegistration)
+      .set({ [fieldName]: updatedArray })
+      .where(eq(sedaRegistration.bubble_id, sedaBubbleId));
+
+    await logDrawingAudit({ sedaBubbleId, actionType: 'upload', fileType, fileUrl });
+
+    revalidatePath("/engineering");
+    return { success: true, url: fileUrl };
+  } catch (error) {
+    console.error("Error uploading engineering file:", error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Delete a file from engineering/drawing records
+ */
+export async function deleteEngineeringFile(
+  sedaBubbleId: string,
+  fileUrl: string,
+  fileType: "system" | "engineering" | "roof"
+) {
+  try {
+    const seda = await db.query.sedaRegistration.findFirst({
+      where: eq(sedaRegistration.bubble_id, sedaBubbleId),
+    });
+
+    if (!seda) throw new Error("SEDA registration not found");
+
+    let fieldName: keyof typeof sedaRegistration;
+    let currentArray: string[] = [];
+
+    if (fileType === "system") {
+      fieldName = "drawing_pdf_system";
+      currentArray = seda.drawing_pdf_system || [];
+    } else if (fileType === "engineering") {
+      fieldName = "drawing_engineering_seda_pdf";
+      currentArray = seda.drawing_engineering_seda_pdf || [];
+    } else {
+      fieldName = "roof_images";
+      currentArray = seda.roof_images || [];
+    }
+
+    const updatedArray = currentArray.filter((url) => url !== fileUrl);
+
+    await db
+      .update(sedaRegistration)
+      .set({ [fieldName]: updatedArray })
+      .where(eq(sedaRegistration.bubble_id, sedaBubbleId));
+
+    await logDrawingAudit({ sedaBubbleId, actionType: 'delete', fileType, fileUrl });
+
+    revalidatePath("/engineering");
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting engineering file:", error);
+    return { success: false, error: String(error) };
+  }
+}

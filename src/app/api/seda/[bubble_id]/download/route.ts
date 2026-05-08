@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { sedaRegistration, customers } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { sedaRegistration, customers, invoices } from "@/db/schema";
+import { eq, or, sql } from "drizzle-orm";
 import JSZip from "jszip";
 import fs from "fs";
 import path from "path";
@@ -57,11 +57,12 @@ export async function GET(
   try {
     const { bubble_id } = await params;
 
+    // Fetch SEDA data with customer name via invoice (invoice is the center of data relationship)
+    // Flow: SEDA <- invoice.linked_seda_registration -> invoice.linked_customer -> customer
     const fetchSedaData = async () => {
       return db
         .select({
           bubble_id: sedaRegistration.bubble_id,
-          linked_customer: sedaRegistration.linked_customer,
           mykad_pdf: sedaRegistration.mykad_pdf,
           ic_copy_front: sedaRegistration.ic_copy_front,
           ic_copy_back: sedaRegistration.ic_copy_back,
@@ -84,7 +85,8 @@ export async function GET(
           customer_name: customers.name,
         })
         .from(sedaRegistration)
-        .leftJoin(customers, eq(sedaRegistration.linked_customer, customers.customer_id))
+        .leftJoin(invoices, or(eq(invoices.linked_seda_registration, sedaRegistration.bubble_id), sql`${invoices.bubble_id} = ANY(${sedaRegistration.linked_invoice})`))
+        .leftJoin(customers, eq(invoices.linked_customer, customers.customer_id))
         .where(eq(sedaRegistration.bubble_id, bubble_id))
         .limit(1);
     };

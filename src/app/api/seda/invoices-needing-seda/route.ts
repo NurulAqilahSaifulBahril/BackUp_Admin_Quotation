@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { invoices, sedaRegistration, agents, customers } from "@/db/schema";
+import { invoices, sedaRegistration, users, customers } from "@/db/schema";
 import { desc, or, and, sql, eq, isNull } from "drizzle-orm";
 
 /**
@@ -59,7 +59,9 @@ export async function GET(request: NextRequest) {
         percent_of_total_amount: invoices.percent_of_total_amount,
         customer_name: customers.name,
         customer_bubble_id: invoices.linked_customer,
-        agent_bubble_id: invoices.linked_agent,
+        agent_user_id: sedaRegistration.agent,
+        agent_user_email: users.email,
+        agent_code: users.agent_code,
         linked_seda_registration: invoices.linked_seda_registration,
         invoice_date: invoices.invoice_date,
         invoice_status: invoices.status,
@@ -87,15 +89,15 @@ export async function GET(request: NextRequest) {
         e_contact_no: sedaRegistration.e_contact_no,
         e_contact_relationship: sedaRegistration.e_contact_relationship,
 
-        // Agent name
-        agent_name: agents.name,
+        // SEDA owner user identity
+        seda_agent_user_id: sedaRegistration.agent,
       })
       .from(invoices)
       .leftJoin(sedaRegistration, or(
         eq(invoices.linked_seda_registration, sedaRegistration.bubble_id),
         sql`${invoices.bubble_id} = ANY(${sedaRegistration.linked_invoice})`
       ))
-      .leftJoin(agents, eq(invoices.linked_agent, agents.bubble_id))
+      .leftJoin(users, eq(sedaRegistration.agent, users.bubble_id))
       .leftJoin(customers, eq(invoices.linked_customer, customers.customer_id))
       .where(whereCondition)
       .orderBy(
@@ -112,7 +114,9 @@ export async function GET(request: NextRequest) {
       filtered = filtered.filter(inv =>
         (inv.invoice_number?.toLowerCase().includes(searchQuery)) ||
         (inv.customer_name?.toLowerCase().includes(searchQuery)) ||
-        (inv.agent_name?.toLowerCase().includes(searchQuery)) ||
+        (inv.agent_user_id?.toLowerCase().includes(searchQuery)) ||
+        (inv.agent_user_email?.toLowerCase().includes(searchQuery)) ||
+        (inv.agent_code?.toLowerCase().includes(searchQuery)) ||
         (inv.seda_installation_address?.toLowerCase().includes(searchQuery))
       );
     }

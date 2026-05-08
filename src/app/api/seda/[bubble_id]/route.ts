@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { sedaRegistration, customers, invoices } from "@/db/schema";
+import { sedaRegistration, customers, invoices, users, invoice_audit_log } from "@/db/schema";
 import { eq, sql, or, getTableColumns } from "drizzle-orm";
+import { getUser } from "@/lib/auth";
 
 interface RouteContext {
   params: Promise<{
@@ -20,13 +21,16 @@ export async function GET(
   try {
     const { bubble_id } = await params;
 
-    // Fetch SEDA data with customer name and linked invoice via LEFT JOIN
+    // Fetch SEDA data with customer name via invoice (invoice is the center of data relationship)
+    // Flow: SEDA <- invoice.linked_seda_registration -> invoice.linked_customer -> customer
     const result = await db
       .select({
         // SEDA fields
         seda: sedaRegistration,
         // Customer name
         customer_name: customers.name,
+        agent_user_email: users.email,
+        agent_code: users.agent_code,
         // Invoice fields
         invoice_number: invoices.invoice_number,
         invoice_total: invoices.total_amount,
@@ -34,8 +38,9 @@ export async function GET(
         invoice_id: invoices.id,
       })
       .from(sedaRegistration)
-      .leftJoin(customers, eq(sedaRegistration.linked_customer, customers.customer_id))
       .leftJoin(invoices, or(eq(invoices.linked_seda_registration, sedaRegistration.bubble_id), sql`${invoices.bubble_id} = ANY(${sedaRegistration.linked_invoice})`))
+      .leftJoin(customers, eq(invoices.linked_customer, customers.customer_id))
+      .leftJoin(users, eq(sedaRegistration.agent, users.bubble_id))
       .where(eq(sedaRegistration.bubble_id, bubble_id))
       .limit(1);
 
@@ -46,7 +51,7 @@ export async function GET(
       );
     }
 
-    const { seda, customer_name, invoice_number, invoice_total, invoice_percent_paid, invoice_id } = result[0];
+    const { seda, customer_name, agent_user_email, agent_code, invoice_number, invoice_total, invoice_percent_paid, invoice_id } = result[0];
 
     // Calculate checkpoints
     const hasRequiredPayment = parseFloat(invoice_percent_paid || "0") >= 4;
@@ -66,9 +71,18 @@ export async function GET(
 
     // Return response with customer data
     return NextResponse.json({
-      seda: seda,
+      seda: {
+        ...seda,
+        agent_user_id: seda.agent,
+        agent_user_email,
+        agent_code,
+      },
       customer: customer_name ? { name: customer_name } : null,
-      agent: null,
+      agent: seda.agent ? {
+        user_id: seda.agent,
+        email: agent_user_email,
+        agent_code,
+      } : null,
       invoice: invoice_id ? {
         id: invoice_id,
         invoice_number: invoice_number,
@@ -105,6 +119,11 @@ export async function PATCH(
   try {
     const { bubble_id } = await params;
     const body = await request.json();
+
+    // Fetch current row before update so we can diff before/after for the audit log
+    const current = await db.query.sedaRegistration.findFirst({
+      where: eq(sedaRegistration.bubble_id, bubble_id),
+    });
 
     // Whitelist strictly to existing columns in the Drizzle schema to avoid runtime errors.
     // Block primary identifiers to prevent accidental data corruption.
@@ -160,6 +179,54 @@ export async function PATCH(
         { status: 404 }
       );
     }
+
+    // Write audit log — fire-and-forget, never blocks the response
+    void (async () => {
+      try {
+        // Build change list by diffing request body against prior state
+        const changes: Array<{ field: string; before: any; after: any }> = [];
+        for (const [key, after] of Object.entries(updateData)) {
+          if (key === 'updated_at') continue;
+          const before = current ? (current as any)[key] : undefined;
+          const beforeStr = before == null ? null : String(before);
+          const afterStr = after == null ? null : String(after);
+          if (beforeStr !== afterStr) {
+            changes.push({ field: key, before: beforeStr, after: afterStr });
+          }
+        }
+        if (changes.length === 0) return;
+
+        // Resolve the linked invoice via linked_seda_registration
+        const invoice = await db.query.invoices.findFirst({
+          where: eq(invoices.linked_seda_registration, bubble_id),
+          columns: { id: true, bubble_id: true, invoice_number: true },
+        });
+        if (!invoice) return;
+
+        let actor: { name?: string; phone?: string; userId?: string; role?: string } = {};
+        try {
+          const user = await getUser();
+          if (user) actor = { name: user.name || undefined, phone: user.phone || undefined, userId: user.userId || undefined, role: user.role || undefined };
+        } catch (_) {}
+
+        await db.insert(invoice_audit_log).values({
+          invoice_id: invoice.id,
+          invoice_number: invoice.invoice_number,
+          entity_type: 'seda',
+          entity_id: bubble_id,
+          action_type: 'update',
+          changes,
+          actor_name: actor.name ?? null,
+          actor_phone: actor.phone ?? null,
+          actor_user_id: actor.userId ?? null,
+          actor_role: actor.role ?? null,
+          source_app: 'ee-admin',
+          edited_at: new Date(),
+        });
+      } catch (e) {
+        console.error('[seda/patch] audit log failed:', e);
+      }
+    })();
 
     return NextResponse.json({
       success: true,

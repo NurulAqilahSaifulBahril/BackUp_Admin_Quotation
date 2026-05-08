@@ -8,19 +8,16 @@ import { eq, isNull, and, sql } from "drizzle-orm";
  *
  * Maintenance endpoint to patch missing links between invoices and SEDA registrations.
  *
- * This endpoint performs two patches:
+ * This endpoint performs one patch:
  * 1. Backfill invoice.linked_seda_registration for invoices missing this link
- * 2. Patch seda_registration.linked_customer for SEDAs missing this link
  *
- * Both patches use the customer relationship as the bridge:
- * - Invoice -> linked_customer -> SEDA
- * - SEDA -> linked_customer -> Invoice
+ * NOTE: The old Patch 2 (seda_registration.linked_customer) has been removed.
+ * Customer is now always looked up via invoice.linked_customer.
  */
 export async function POST(request: NextRequest) {
   try {
     const results = {
       invoicesPatched: 0,
-      sedasPatched: 0,
       errors: [] as string[]
     };
 
@@ -68,49 +65,6 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         results.errors.push(`Invoice ${invoice.invoice_bubble_id}: ${err}`);
-      }
-    }
-
-    // ========================================================================
-    // PATCH 2: Backfill seda_registration.linked_customer
-    // ========================================================================
-    // Find SEDAs missing linked_customer but have linked invoices
-    const sedasNeedingPatch = await db
-      .select({
-        seda_bubble_id: sedaRegistration.bubble_id,
-      })
-      .from(sedaRegistration)
-      .leftJoin(invoices, eq(invoices.linked_seda_registration, sedaRegistration.bubble_id))
-      .where(
-        and(
-          sql`${sedaRegistration.linked_customer} IS NULL OR ${sedaRegistration.linked_customer} = ''`,
-          sql`${invoices.linked_customer} IS NOT NULL`
-        )
-      );
-
-    // Update each SEDA with the customer from its linked invoice
-    for (const seda of sedasNeedingPatch) {
-      try {
-        // Get the customer from the linked invoice
-        const invoiceWithCustomer = await db
-          .select({
-            linked_customer: invoices.linked_customer,
-          })
-          .from(invoices)
-          .where(eq(invoices.linked_seda_registration, seda.seda_bubble_id!))
-          .limit(1);
-
-        if (invoiceWithCustomer.length > 0 && invoiceWithCustomer[0].linked_customer) {
-          // Update the SEDA with the customer link
-          await db
-            .update(sedaRegistration)
-            .set({ linked_customer: invoiceWithCustomer[0].linked_customer })
-            .where(eq(sedaRegistration.bubble_id, seda.seda_bubble_id!));
-
-          results.sedasPatched++;
-        }
-      } catch (err) {
-        results.errors.push(`SEDA ${seda.seda_bubble_id}: ${err}`);
       }
     }
 

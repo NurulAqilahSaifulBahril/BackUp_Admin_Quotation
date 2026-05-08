@@ -22,7 +22,6 @@ import { logSyncActivity } from "@/lib/logger";
 import { syncInvoiceWithFullIntegrity, syncBatchInvoicesWithIntegrity } from "@/lib/integrity-sync";
 import { createSyncProgress } from "@/lib/sync-progress";
 import { restoreInvoiceSedaLinks } from "./link-restoration";
-import { patchSedaCustomerLinks } from "./link-restoration";
 
 /**
  * ============================================================================
@@ -85,7 +84,7 @@ import { patchSedaCustomerLinks } from "./link-restoration";
  * - Calls onProgress callback with step updates
  *
  * DEPENDENCIES:
- * - Requires: syncInvoiceWithFullIntegrity(), restoreInvoiceSedaLinks(), patchSedaCustomerLinks()
+ * - Requires: syncInvoiceWithFullIntegrity(), restoreInvoiceSedaLinks()
  * - Used by: src/app/sync/page.tsx (Integrity Sync form)
  */
 export async function runIntegritySync(invoiceBubbleId: string, options?: { force?: boolean }) {
@@ -116,10 +115,6 @@ export async function runIntegritySync(invoiceBubbleId: string, options?: { forc
       // Patch 1: Restore Invoice→SEDA links from SEDA.linked_invoice array
       const invoiceLinkResult = await restoreInvoiceSedaLinks();
       logSyncActivity(`Invoice→SEDA links restored: ${invoiceLinkResult.linked || 0} linked`, 'INFO');
-
-      // Patch 2: Fix SEDA→Customer links from Invoice.linked_customer
-      const sedaCustomerResult = await patchSedaCustomerLinks();
-      logSyncActivity(`SEDA→Customer links patched: ${sedaCustomerResult.patched || 0} patched`, 'INFO');
     } else {
       logSyncActivity(`❌ Integrity Sync FAILED`, 'ERROR');
       result.errors.forEach((err, idx) => {

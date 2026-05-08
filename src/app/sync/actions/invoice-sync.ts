@@ -20,7 +20,6 @@ import { revalidatePath } from "next/cache";
 import { logSyncActivity } from "@/lib/logger";
 import { syncInvoicePackageWithRelations } from "@/lib/bubble";
 import { restoreInvoiceSedaLinks } from "./link-restoration";
-import { patchSedaCustomerLinks } from "./link-restoration";
 
 /**
  * ============================================================================
@@ -69,7 +68,7 @@ import { patchSedaCustomerLinks } from "./link-restoration";
  * - Calls revalidatePath() to refresh Next.js cache
  *
  * DEPENDENCIES:
- * - Requires: syncInvoicePackageWithRelations(), restoreInvoiceSedaLinks(), patchSedaCustomerLinks()
+ * - Requires: syncInvoicePackageWithRelations(), restoreInvoiceSedaLinks()
  * - Used by: src/app/sync/page.tsx (Full Invoice Sync form)
  */
 export async function runFullInvoiceSync(dateFrom: string, dateTo?: string, sessionId?: string) {
@@ -87,10 +86,6 @@ export async function runFullInvoiceSync(dateFrom: string, dateTo?: string, sess
       // Patch 1: Restore Invoice→SEDA links from SEDA.linked_invoice array
       const invoiceLinkResult = await restoreInvoiceSedaLinks();
       logSyncActivity(`Invoice→SEDA links restored: ${invoiceLinkResult.linked || 0} linked`, 'INFO');
-
-      // Patch 2: Fix SEDA→Customer links from Invoice.linked_customer
-      const sedaCustomerResult = await patchSedaCustomerLinks();
-      logSyncActivity(`SEDA→Customer links patched: ${sedaCustomerResult.patched || 0} patched`, 'INFO');
     } else {
       logSyncActivity(`Full Invoice Sync FAILED: ${result.error}`, 'ERROR');
     }
@@ -136,8 +131,7 @@ export async function runFullInvoiceSync(dateFrom: string, dateTo?: string, sess
  * 4. Fetch from Bubble API only if newer than local copy
  * 5. Upsert to PostgreSQL
  * 6. Restore Invoice→SEDA links
- * 7. Patch SEDA→Customer links
- * 8. Revalidate Next.js cached paths
+ * 7. Revalidate Next.js cached paths
  *
  * OPTIMIZATION STRATEGY:
  * - Avoids fetching all invoices (no need to scan 4000+ records)
@@ -174,10 +168,6 @@ export async function runIdListSync(csvData: string) {
       // Patch 1: Restore Invoice→SEDA links from SEDA.linked_invoice array
       const invoiceLinkResult = await restoreInvoiceSedaLinks();
       logSyncActivity(`Invoice→SEDA links restored: ${invoiceLinkResult.linked || 0} linked`, 'INFO');
-
-      // Patch 2: Fix SEDA→Customer links from Invoice.linked_customer
-      const sedaCustomerResult = await patchSedaCustomerLinks();
-      logSyncActivity(`SEDA→Customer links patched: ${sedaCustomerResult.patched || 0} patched`, 'INFO');
     } else {
       logSyncActivity(`Optimized Fast ID-List Sync FAILED: ${result.error}`, 'ERROR');
     }

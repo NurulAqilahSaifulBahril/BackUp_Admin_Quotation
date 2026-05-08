@@ -7,6 +7,11 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const APP_BASE_URL = process.env.NEXT_PUBLIC_APP_URL;
 
 export async function middleware(request: NextRequest) {
+  // DEMO: Skip auth for invoice-log in local development
+  if (process.env.NODE_ENV !== 'production' && request.nextUrl.pathname.startsWith('/invoice-log')) {
+    return NextResponse.next();
+  }
+
   const token = request.cookies.get('auth_token')?.value;
 
   if (!token) {
