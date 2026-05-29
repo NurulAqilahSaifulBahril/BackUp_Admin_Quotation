@@ -1,12 +1,13 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { invoices, agents, users, invoice_templates, customers, payments, invoice_items, invoice_edit_history, invoice_audit_log, packages } from "@/db/schema";
+import { invoices, agents, users, invoice_templates, customers, payments, invoice_items, invoice_edit_history, invoice_audit_log, packages, sedaRegistration } from "@/db/schema";
 import { ilike, or, sql, desc, eq, and, inArray, gte, lte } from "drizzle-orm";
 import { getInvoiceHtml } from "@/lib/invoice-renderer";
 import { revalidatePath } from "next/cache";
 import { syncCompleteInvoicePackage } from "@/lib/bubble";
 import { logInvoiceEdit } from "@/lib/invoice-edit-logger";
+import { syncInvoiceWithFullIntegrity } from "@/lib/integrity-sync";
 
 const PDF_API_URL = "https://pdf-gen-production-6c81.up.railway.app";
 
@@ -84,6 +85,60 @@ export async function getInvoices(
       return { data, total, page, pageSize };
     } else {
       // v2 - Modern Invoices (Consolidated)
+      
+      // Quick incremental check on first page load to pull recently modified invoices from Bubble
+      if (
+        page === 1 &&
+        tab === "active" &&
+        !search &&
+        !filters?.dateFrom &&
+        !filters?.dateTo &&
+        !filters?.createdBy &&
+        !filters?.paidPercentMin &&
+        !filters?.paidPercentMax
+      ) {
+        try {
+          const { BUBBLE_BASE_URL, BUBBLE_API_HEADERS } = await import("@/lib/bubble");
+          const url = `${BUBBLE_BASE_URL}/invoice?limit=30&sort_field=Modified Date&descending=true`;
+          const response = await fetch(url, { headers: BUBBLE_API_HEADERS });
+          if (response.ok) {
+            const data = await response.json();
+            const bubbleInvoices = data.response.results || [];
+            if (bubbleInvoices.length > 0) {
+              const bubbleIds = bubbleInvoices.map((inv: any) => inv._id);
+              // Find matching local invoices
+              const localInvoices = await db.select({
+                bubble_id: invoices.bubble_id,
+                updated_at: invoices.updated_at
+              })
+              .from(invoices)
+              .where(inArray(invoices.bubble_id, bubbleIds));
+
+              const localMap = new Map(localInvoices.map((inv) => [inv.bubble_id, inv]));
+
+              for (const bInv of bubbleInvoices) {
+                const bubbleId = bInv._id;
+                const bubbleModified = new Date(bInv["Modified Date"]);
+                const localInv = localMap.get(bubbleId);
+
+                const needsSync = !localInv || !localInv.updated_at || new Date(localInv.updated_at) < bubbleModified;
+                if (needsSync) {
+                  console.log(`Incremental sync: invoice ${bubbleId} needs update...`);
+                  // Sync this invoice with full integrity
+                  await syncInvoiceWithFullIntegrity(bubbleId, {
+                    force: true,
+                    skipUsers: true,
+                    skipAgents: true
+                  });
+                }
+              }
+            }
+          }
+        } catch (syncError) {
+          console.error("Incremental auto-sync in getInvoices failed:", syncError);
+        }
+      }
+
       const searchCondition = search ? sql`AND (
         c.name ILIKE ${`%${search}%`}
         OR i.invoice_number ILIKE ${`%${search}%`}
@@ -174,11 +229,24 @@ export async function getInvoices(
 
 export async function getInvoiceDetails(id: number, version: "v1" | "v2") {
   try {
-    const invoice = await db.query.invoices.findFirst({
+    let invoice = await db.query.invoices.findFirst({
       where: eq(invoices.id, id),
     });
 
     if (!invoice) return null;
+
+    // Always pull the latest data from Bubble for this invoice on load
+    if (invoice.bubble_id) {
+      try {
+        await syncInvoiceWithFullIntegrity(invoice.bubble_id, { force: true, skipUsers: true, skipAgents: true });
+        // Re-query the updated invoice details from the local DB
+        invoice = await db.query.invoices.findFirst({
+          where: eq(invoices.id, id),
+        }) || invoice;
+      } catch (syncError) {
+        console.error("Auto-sync on invoice load failed:", syncError);
+      }
+    }
 
     if (version === "v2" || invoice.invoice_number) {
       // Fetch all linked invoice items
@@ -187,6 +255,27 @@ export async function getInvoiceDetails(id: number, version: "v1" | "v2") {
         items = await db.query.invoice_items.findMany({
           where: inArray(invoice_items.bubble_id, invoice.linked_invoice_item),
         });
+
+        // Enrich items with package_type from the packages table
+        const packageBubbleIds = items
+          .filter((item) => item.linked_package)
+          .map((item) => item.linked_package as string);
+
+        if (packageBubbleIds.length > 0) {
+          const linkedPackages = await db.query.packages.findMany({
+            where: inArray(packages.bubble_id, packageBubbleIds),
+            columns: { bubble_id: true, type: true, package_name: true },
+          });
+
+          const packageMap = new Map(linkedPackages.map((p) => [p.bubble_id, p]));
+          items = items.map((item) => {
+            if (item.linked_package && packageMap.has(item.linked_package)) {
+              const pkg = packageMap.get(item.linked_package)!;
+              return { ...item, package_type: pkg.type, package_name: pkg.package_name };
+            }
+            return item;
+          });
+        }
       }
 
       const template = await db.query.invoice_templates.findFirst({
@@ -222,6 +311,14 @@ export async function getInvoiceDetails(id: number, version: "v1" | "v2") {
         });
       }
 
+      // Fetch SEDA registration to get customer signature
+      let sedaRegistrationData = null;
+      if (invoice.linked_seda_registration) {
+        sedaRegistrationData = await db.query.sedaRegistration.findFirst({
+          where: eq(sedaRegistration.bubble_id, invoice.linked_seda_registration),
+        });
+      }
+
       return {
         ...invoice,
         items,
@@ -233,6 +330,7 @@ export async function getInvoiceDetails(id: number, version: "v1" | "v2") {
         customer_phone_snapshot: customerData?.phone || null,
         customer_email_snapshot: customerData?.email || null,
         linked_payments: paymentsData,
+        seda_registration: sedaRegistrationData,
         total_payments: paymentsData.reduce((sum, p) => sum + Number(p.amount || 0), 0),
       };
     } else {
@@ -1050,5 +1148,123 @@ export async function getUsersForFilter() {
   } catch (error) {
     console.error("Error fetching users for filter:", error);
     return [];
+  }
+}
+
+// ============================================================================
+// CREATE NEW INVOICE
+// ============================================================================
+
+export async function getCustomersForInvoice(search?: string) {
+  try {
+    const conditions: any[] = [];
+    if (search && search.trim()) {
+      conditions.push(
+        or(
+          ilike(customers.name, `%${search.trim()}%`),
+          ilike(customers.email, `%${search.trim()}%`),
+          ilike(customers.phone, `%${search.trim()}%`)
+        )
+      );
+    }
+
+    const result = await db
+      .select({
+        customer_id: customers.customer_id,
+        name: customers.name,
+        email: customers.email,
+        phone: customers.phone,
+        address: customers.address,
+      })
+      .from(customers)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(customers.name)
+      .limit(50);
+
+    return { success: true, customers: result };
+  } catch (error) {
+    console.error("Error fetching customers for invoice:", error);
+    return { success: false, error: String(error), customers: [] };
+  }
+}
+
+export async function createInvoice(data: {
+  customer_id: string;
+  invoice_date: string;
+  notes?: string;
+  created_by_bubble_id?: string;
+}) {
+  try {
+    if (!data.customer_id) {
+      return { success: false, error: "Customer is required" };
+    }
+    if (!data.invoice_date) {
+      return { success: false, error: "Invoice date is required" };
+    }
+
+    // Validate the customer exists
+    const customer = await db.query.customers.findFirst({
+      where: eq(customers.customer_id, data.customer_id),
+    });
+    if (!customer) {
+      return { success: false, error: "Customer not found" };
+    }
+
+    // Generate a new invoice number: INV-YYYYMMDD-XXXXX
+    const today = new Date();
+    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
+    const rand = Math.floor(Math.random() * 90000) + 10000;
+    const invoiceNumber = `INV-${dateStr}-${rand}`;
+
+    // Generate a local bubble_id (won't sync to Bubble but keeps the schema consistent)
+    const bubbleId = `local_${Date.now()}x${Math.random().toString(36).slice(2, 10)}`;
+
+    // Get the highest invoice_id so far and increment
+    const lastInvoice = await db
+      .select({ invoice_id: invoices.invoice_id })
+      .from(invoices)
+      .orderBy(desc(invoices.invoice_id))
+      .limit(1);
+    const nextInvoiceId = lastInvoice.length > 0 && lastInvoice[0].invoice_id
+      ? lastInvoice[0].invoice_id + 1
+      : 1;
+
+    // Get default template
+    const template = await db.query.invoice_templates.findFirst({
+      where: eq(invoice_templates.is_default, true),
+    });
+
+    const newInvoice = await db
+      .insert(invoices)
+      .values({
+        bubble_id: bubbleId,
+        invoice_id: nextInvoiceId,
+        invoice_number: invoiceNumber,
+        invoice_date: new Date(data.invoice_date),
+        linked_customer: data.customer_id,
+        total_amount: "0",
+        amount: "0",
+        percent_of_total_amount: "0",
+        status: "Draft",
+        is_latest: true,
+        is_deleted: false,
+        paid: false,
+        linked_invoice_item: [],
+        template_id: template?.bubble_id || null,
+        created_by: data.created_by_bubble_id || null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+      .returning();
+
+    if (newInvoice.length === 0) {
+      return { success: false, error: "Failed to create invoice" };
+    }
+
+    revalidatePath("/invoices");
+    return { success: true, invoice: newInvoice[0] };
+  } catch (error) {
+    console.error("Error creating invoice:", error);
+    return { success: false, error: String(error) };
   }
 }

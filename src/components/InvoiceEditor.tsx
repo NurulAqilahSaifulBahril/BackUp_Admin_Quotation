@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, useMemo } from "react";
 import { INVOICE_TEMPLATE_HTML } from "@/lib/invoice-template";
+import { QUOTATION_TEMPLATE_HTML } from "@/lib/quotation-template";
 import { X, Download, Loader2, FileText, User, CreditCard, Package, MapPin, Phone, Mail, Calendar, DollarSign, Info, Save, Edit2, Plus, Trash2, Check, X as XIcon, Clock, ArrowRight, Calculator, AlertCircle, RefreshCw, Search } from "lucide-react";
-import { generateInvoicePdf, updateInvoiceItem, createInvoiceItem, deleteInvoiceItem, updateInvoiceAgent, getAgentsForSelection, getInvoiceDetails, getInvoiceEditHistory, updateInvoiceWithEppFees, searchPackagesForSwitch, switchInvoiceItemPackage } from "@/app/invoices/actions";
+import { generateInvoicePdf, updateInvoiceItem, createInvoiceItem, deleteInvoiceItem, updateInvoiceAgent, getAgentsForSelection, getInvoiceDetails, getInvoiceEditHistory, updateInvoiceWithEppFees, searchPackagesForSwitch, switchInvoiceItemPackage } from "@/app/(app)/invoices/actions";
 import { EPP_RATES, EPP_BANKS, getEppRate, FOREIGN_CARD_RATES, AMEX_RATE } from "@/lib/epp-rates";
 import { getInvoiceIdDisplay, getInvoiceNumberDisplay } from "@/lib/invoice-display";
 
@@ -13,7 +14,7 @@ interface InvoiceEditorProps {
   version?: "v1" | "v2";
 }
 
-type Tab = "preview" | "details" | "history" | "epp";
+type Tab = "preview" | "invoice_preview" | "details" | "history" | "epp";
 
 interface EditingItem {
   id: number;
@@ -37,6 +38,7 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("details");
+  const [showQuotationDiscounts, setShowQuotationDiscounts] = useState(true);
   const [invoiceData, setInvoiceData] = useState(initialInvoiceData);
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
   const [editingItem, setEditingItem] = useState<EditingItem | null>(null);
@@ -64,6 +66,9 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
   const [pkgSearching, setPkgSearching] = useState(false);
   const [switchingPkgId, setSwitchingPkgId] = useState<string | null>(null);
   const [pkgSearched, setPkgSearched] = useState(false);
+
+  // Sales Order Payment Milestone State
+  const [selectedMilestone, setSelectedMilestone] = useState<'a' | 'b' | 'c' | 'd' | null>(null);
 
   const refreshHistory = () => setHistoryRefreshKey((k) => k + 1);
 
@@ -140,25 +145,52 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
           if (currentAgent) {
             setSelectedAgentId(currentAgent.bubble_id);
           }
+
+
         }
       }
     }
     loadAgents();
   }, [invoiceData?.linked_agent]);
 
+  // Listen to postMessage events from the preview iframe to toggle discounts/details
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'toggleQuotationDiscounts') {
+        setShowQuotationDiscounts(prev => !prev);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   // Update preview when invoiceData changes
   useEffect(() => {
-    if (iframeRef.current && invoiceData && activeTab === "preview") {
-      const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
-      if (doc) {
-        doc.open();
-        const dataScript = `<script>window.invoiceData = ${JSON.stringify(invoiceData)};</script>`;
-        const htmlWithData = INVOICE_TEMPLATE_HTML.replace('</head>', `${dataScript}</head>`);
-        doc.write(htmlWithData);
-        doc.close();
-      }
+    if (iframeRef.current && invoiceData && (activeTab === "preview" || activeTab === "invoice_preview")) {
+      const updateIframe = () => {
+        const doc = iframeRef.current?.contentDocument || iframeRef.current?.contentWindow?.document;
+        if (doc) {
+          doc.open();
+          const enrichedInvoiceData = {
+            ...invoiceData,
+            showDiscounts: showQuotationDiscounts
+          };
+          const dataScript = `<script>window.invoiceData = ${JSON.stringify(enrichedInvoiceData)};</script>`;
+          const template = activeTab === "preview" ? QUOTATION_TEMPLATE_HTML : INVOICE_TEMPLATE_HTML;
+          const htmlWithData = template.replace('</head>', `${dataScript}</head>`);
+          doc.write(htmlWithData);
+          doc.close();
+        }
+      };
+
+      // Render immediately
+      updateIframe();
+
+      // Delayed rendering to ensure browser layout settling doesn't wipe or clear out the written document
+      const timer = setTimeout(updateIframe, 80);
+      return () => clearTimeout(timer);
     }
-  }, [invoiceData, activeTab]);
+  }, [invoiceData, activeTab, showQuotationDiscounts]);
 
   const handleDownloadPdf = async () => {
     if (!invoiceData.id) return;
@@ -517,14 +549,16 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleDownloadPdf}
-              disabled={downloading}
-              className="text-[12px] font-medium text-secondary-700 hover:text-secondary-900 flex items-center gap-2 px-3 py-1.5 rounded border border-secondary-200 hover:bg-secondary-50 transition-colors"
-            >
-              {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-              <span>Download PDF</span>
-            </button>
+            {activeTab !== "details" && (
+              <button
+                onClick={handleDownloadPdf}
+                disabled={downloading}
+                className="text-[12px] font-medium text-secondary-700 hover:text-secondary-900 flex items-center gap-2 px-3 py-1.5 rounded border border-secondary-200 hover:bg-secondary-50 transition-colors"
+              >
+                {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                <span>Download PDF</span>
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-1.5 hover:bg-secondary-100 rounded-md transition-colors text-secondary-400 hover:text-secondary-900"
@@ -535,57 +569,83 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
         </div>
 
         {/* Tabs Bar */}
-        <div className="flex items-center px-6 border-b border-secondary-200 bg-secondary-50/50 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab("details")}
-            className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all mr-2 whitespace-nowrap ${activeTab === "details"
-              ? "border-primary-600 text-primary-600"
-              : "border-transparent text-secondary-500 hover:text-secondary-700"
-              }`}
-          >
-            Invoice Details
-          </button>
-          <button
-            onClick={() => setActiveTab("preview")}
-            className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all mr-2 whitespace-nowrap ${activeTab === "preview"
-              ? "border-primary-600 text-primary-600"
-              : "border-transparent text-secondary-500 hover:text-secondary-700"
-              }`}
-          >
-            Preview Document
-          </button>
-          <button
-            onClick={() => setActiveTab("epp")}
-            className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all mr-2 whitespace-nowrap flex items-center gap-1.5 ${activeTab === "epp"
-              ? "border-primary-600 text-primary-600"
-              : "border-transparent text-secondary-500 hover:text-secondary-700"
-              }`}
-          >
-            <Calculator className="w-3.5 h-3.5" />
-            Payment Plan / EPP
-          </button>
-          <button
-            onClick={() => setActiveTab("history")}
-            className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === "history"
-              ? "border-primary-600 text-primary-600"
-              : "border-transparent text-secondary-500 hover:text-secondary-700"
-              }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            Edit History
-          </button>
+        <div className="flex items-center justify-between px-6 border-b border-secondary-200 bg-secondary-50/50">
+          <div className="flex items-center overflow-x-auto flex-1 mr-4">
+            <button
+              onClick={() => setActiveTab("details")}
+              className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all mr-2 whitespace-nowrap ${activeTab === "details"
+                ? "border-primary-600 text-primary-600"
+                : "border-transparent text-secondary-500 hover:text-secondary-700"
+                }`}
+            >
+              Invoice Details
+            </button>
+            <button
+              onClick={() => setActiveTab("preview")}
+              className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all mr-2 whitespace-nowrap ${activeTab === "preview"
+                ? "border-primary-600 text-primary-600"
+                : "border-transparent text-secondary-500 hover:text-secondary-700"
+                }`}
+            >
+              Quotation Preview
+            </button>
+            <button
+              onClick={() => setActiveTab("invoice_preview")}
+              className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all mr-2 whitespace-nowrap ${activeTab === "invoice_preview"
+                ? "border-primary-600 text-primary-600"
+                : "border-transparent text-secondary-500 hover:text-secondary-700"
+                }`}
+            >
+              Sales Order Preview
+            </button>
+            <button
+              onClick={() => setActiveTab("epp")}
+              className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all mr-2 whitespace-nowrap flex items-center gap-1.5 ${activeTab === "epp"
+                ? "border-primary-600 text-primary-600"
+                : "border-transparent text-secondary-500 hover:text-secondary-700"
+                }`}
+            >
+              <Calculator className="w-3.5 h-3.5" />
+              Payment Plan / EPP
+            </button>
+            <button
+              onClick={() => setActiveTab("history")}
+              className={`px-4 py-2.5 text-[12px] font-medium border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === "history"
+                ? "border-primary-600 text-primary-600"
+                : "border-transparent text-secondary-500 hover:text-secondary-700"
+                }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              Edit History
+            </button>
+          </div>
         </div>
 
         {/* Content Area */}
-        {activeTab === "preview" ? (
-          <div className="flex-1 bg-secondary-100/50 p-6 overflow-auto flex justify-center">
-            <iframe
-              ref={iframeRef}
-              className="w-full max-w-[800px] bg-white shadow-sm min-h-[1100px] border border-secondary-200"
-              title="Invoice Preview"
-            />
-          </div>
-        ) : activeTab === "history" ? (
+        {/* Preview Iframe Container (Always mounted and kept visible to the browser layout to prevent iframe document reloads on display toggles) */}
+        <div 
+          className="bg-secondary-100/50 flex justify-center transition-all duration-150"
+          style={{ 
+            position: (activeTab === "preview" || activeTab === "invoice_preview") ? "relative" : "absolute",
+            opacity: (activeTab === "preview" || activeTab === "invoice_preview") ? 1 : 0,
+            pointerEvents: (activeTab === "preview" || activeTab === "invoice_preview") ? "auto" : "none",
+            height: (activeTab === "preview" || activeTab === "invoice_preview") ? "100%" : 0,
+            width: (activeTab === "preview" || activeTab === "invoice_preview") ? "100%" : 0,
+            padding: (activeTab === "preview" || activeTab === "invoice_preview") ? "24px" : 0,
+            overflow: (activeTab === "preview" || activeTab === "invoice_preview") ? "auto" : "hidden",
+            flex: (activeTab === "preview" || activeTab === "invoice_preview") ? "1 1 0%" : "none",
+          }}
+        >
+          <iframe
+            ref={iframeRef}
+            className="w-full max-w-[800px] bg-white shadow-sm min-h-[1100px] border border-secondary-200"
+            title="Invoice Preview"
+          />
+        </div>
+
+        {/* Tab Content Views */}
+        {activeTab !== "preview" && activeTab !== "invoice_preview" && (
+          activeTab === "history" ? (
           <div className="flex-1 overflow-auto bg-white">
             <div className="p-6 max-w-4xl mx-auto">
               <div className="flex items-center justify-between mb-6">
@@ -883,10 +943,10 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
                       ) : null}
                     </div>
                     {showSecondaryInvoiceNumber ? (
-                    <div>
-                      <span className="text-[11px] font-medium text-secondary-500 block mb-1">Invoice Number</span>
-                      <p className="text-sm font-semibold text-secondary-900">{invoiceNumberDisplay}</p>
-                    </div>
+                      <div>
+                        <span className="text-[11px] font-medium text-secondary-500 block mb-1">Invoice Number</span>
+                        <p className="text-sm font-semibold text-secondary-900">{invoiceNumberDisplay}</p>
+                      </div>
                     ) : null}
                     <div>
                       <span className="text-[11px] font-medium text-secondary-500 block mb-1">Date of Issue</span>
@@ -1205,9 +1265,23 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
                         );
                       })}
                       <tr className="bg-secondary-50/50 border-t border-secondary-200">
-                        <td colSpan={3} className="px-6 py-6 text-right font-bold uppercase tracking-wider text-secondary-400 text-[10px]">Total Amount (RM)</td>
+                        <td colSpan={3} className="px-6 py-6 text-right font-bold uppercase tracking-wider text-secondary-400 text-[10px]">
+                          {selectedMilestone ? (
+                            <span className="text-primary-600">
+                              {selectedMilestone === 'a' && 'Payment (a) — Initial 20%'}
+                              {selectedMilestone === 'b' && 'Payment (b) — SELCO Approval 35%'}
+                              {selectedMilestone === 'c' && 'Payment (c) — Completion 35%'}
+                              {selectedMilestone === 'd' && 'Payment (d) — Meter Activation 10%'}
+                            </span>
+                          ) : 'Total Amount (RM)'}
+                        </td>
                         <td className="px-6 py-6 text-right font-bold text-lg font-mono text-secondary-900">
-                          {parseFloat(invoiceData.total_amount || calculatedTotal || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          {(() => {
+                            const base = parseFloat(invoiceData.total_amount || calculatedTotal || 0);
+                            const rates: Record<string, number> = { a: 0.20, b: 0.35, c: 0.35, d: 0.10 };
+                            const amt = selectedMilestone ? base * rates[selectedMilestone] : base;
+                            return amt.toLocaleString('en-US', { minimumFractionDigits: 2 });
+                          })()}
                         </td>
                         <td></td>
                       </tr>
@@ -1220,6 +1294,8 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
                 )}
               </div>
             </div>
+
+
 
             {/* Remittance Registry */}
             <div className="p-6">
@@ -1261,7 +1337,7 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
               )}
             </div>
           </div>
-        )}
+        ))}
 
         {/* ================================================================ */}
         {/* Change Package Modal                                              */}
@@ -1408,9 +1484,9 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${pkg.type === 'residential' ? 'text-blue-700 bg-blue-50 border-blue-200' :
-                                pkg.type === 'tariff_b' ? 'text-purple-700 bg-purple-50 border-purple-200' :
-                                  pkg.type === 'tariff_d' ? 'text-orange-700 bg-orange-50 border-orange-200' :
-                                    'text-secondary-600 bg-secondary-50 border-secondary-200'
+                              pkg.type === 'tariff_b' ? 'text-purple-700 bg-purple-50 border-purple-200' :
+                                pkg.type === 'tariff_d' ? 'text-orange-700 bg-orange-50 border-orange-200' :
+                                  'text-secondary-600 bg-secondary-50 border-secondary-200'
                               }`}>
                               {pkg.type || 'N/A'}
                             </span>
@@ -1461,19 +1537,6 @@ export default function InvoiceEditor({ invoiceData: initialInvoiceData, onClose
         <div className="px-6 py-4 border-t border-secondary-200 bg-white flex justify-between items-center">
           <div className="text-[10px] font-medium text-secondary-400 uppercase tracking-wider">
             System Identity: <span className="font-bold text-secondary-600">{invoiceData?.created_by_user_name || 'Automated'}</span>
-          </div>
-          <div className="flex gap-3">
-            <button onClick={onClose} className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-secondary-600 hover:bg-secondary-50 rounded transition-all">
-              Discard Changes
-            </button>
-            <button
-              onClick={handleDownloadPdf}
-              disabled={downloading}
-              className="px-6 py-2 bg-secondary-900 hover:bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded transition-all shadow-sm flex items-center gap-2"
-            >
-              {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-              Authorize PDF
-            </button>
           </div>
         </div>
       </div>
