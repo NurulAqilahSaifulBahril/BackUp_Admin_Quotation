@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: backup-admin-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: backup_admin_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Next.js App (Development)
+  app:
+    image: node:20-alpine
+    container_name: backup-admin-app
+    working_dir: /app
+    restart: unless-stopped
+    ports:
+      - "4425:4425"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/backup_admin_dev
+      - NEXT_PUBLIC_APP_URL=http://localhost:4425
+      - JWT_SECRET=local-dev-dummy-secret
+    volumes:
+      # Mount source code so hot reload works
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    command: sh -c "npm install && npm run dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: backup-admin-postgres-data

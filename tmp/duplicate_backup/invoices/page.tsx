@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Search, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Download, Plus, Eye, Edit2, FileText, Loader2, RefreshCw, Database, Trash2, RotateCcw, AlertTriangle, X } from "lucide-react";
-import { getInvoices, getInvoiceDetails, generateInvoicePdf, triggerInvoiceSync, deleteInvoice, recoverInvoice, getUsersForFilter, createInvoice, getCustomersForInvoice } from "./actions";
+import { getInvoices, getInvoiceDetails, generateInvoicePdf, triggerInvoiceSync, deleteInvoice, recoverInvoice, getUsersForFilter } from "./actions";
 import InvoiceEditor from "@/components/InvoiceEditor";
 import { getInvoiceIdDisplay, getInvoiceNumberDisplay } from "@/lib/invoice-display";
 
@@ -27,15 +27,6 @@ function InvoicesContent() {
   const [dateTo, setDateTo] = useState("");
   const [createdBy, setCreatedBy] = useState("");
   const [userList, setUserList] = useState<{ bubble_id: string | null; name: string | null; email: string | null }[]>([]);
-
-  // New Invoice Modal State
-  const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
-  const [newInvoiceCustomerSearch, setNewInvoiceCustomerSearch] = useState("");
-  const [newInvoiceCustomers, setNewInvoiceCustomers] = useState<{ customer_id: string | null; name: string | null; email: string | null; phone: string | null; address: string | null }[]>([]);
-  const [newInvoiceSelectedCustomer, setNewInvoiceSelectedCustomer] = useState<{ customer_id: string | null; name: string | null } | null>(null);
-  const [newInvoiceDate, setNewInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [newInvoiceSearchLoading, setNewInvoiceSearchLoading] = useState(false);
-  const [newInvoiceSubmitting, setNewInvoiceSubmitting] = useState(false);
 
   // Warning Popup State based on expiry date (Apr 20, 2026)
   // [ NOTICE TO NEXT AI AGENT / DEVELOPER ]
@@ -169,39 +160,6 @@ function InvoicesContent() {
     }
   };
 
-  const handleNewInvoiceCustomerSearch = async (q: string) => {
-    setNewInvoiceCustomerSearch(q);
-    if (!q.trim()) { setNewInvoiceCustomers([]); return; }
-    setNewInvoiceSearchLoading(true);
-    try {
-      const res = await getCustomersForInvoice(q);
-      setNewInvoiceCustomers(res.customers as any);
-    } catch { /* ignore */ } finally {
-      setNewInvoiceSearchLoading(false);
-    }
-  };
-
-  const handleCreateInvoice = async () => {
-    if (!newInvoiceSelectedCustomer?.customer_id) { alert('Please select a customer.'); return; }
-    if (!newInvoiceDate) { alert('Please select an invoice date.'); return; }
-    setNewInvoiceSubmitting(true);
-    try {
-      const res = await createInvoice({ customer_id: newInvoiceSelectedCustomer.customer_id, invoice_date: newInvoiceDate });
-      if (res.success && res.invoice) {
-        setShowNewInvoiceModal(false);
-        fetchData();
-        // Auto-open the newly created invoice for editing
-        setTimeout(() => handleViewDetails(res.invoice!.id), 300);
-      } else {
-        alert('Failed to create invoice: ' + (res.error || 'Unknown error'));
-      }
-    } catch (err: any) {
-      alert('Error: ' + err.message);
-    } finally {
-      setNewInvoiceSubmitting(false);
-    }
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Warning Popup */}
@@ -300,7 +258,7 @@ function InvoicesContent() {
             <Download className="h-4 w-4" />
             Export
           </button>
-          <button className="btn-primary flex items-center gap-2" onClick={() => { setShowNewInvoiceModal(true); setNewInvoiceSelectedCustomer(null); setNewInvoiceCustomerSearch(""); setNewInvoiceCustomers([]); setNewInvoiceDate(new Date().toISOString().split('T')[0]); }}>
+          <button className="btn-primary flex items-center gap-2">
             <Plus className="h-4 w-4" />
             New Invoice
           </button>
@@ -433,9 +391,9 @@ function InvoicesContent() {
                   className="input text-sm"
                 >
                   <option value="">All Users</option>
-                  {userList.map((u, index) => (
-                    <option key={u.bubble_id || index} value={u.bubble_id || ""}>
-                      {u.name || u.email || u.bubble_id || "Unknown"}
+                  {userList.map((u) => (
+                    <option key={u.bubble_id} value={u.bubble_id}>
+                      {u.name || u.email || u.bubble_id}
                     </option>
                   ))}
                 </select>
@@ -649,103 +607,6 @@ function InvoicesContent() {
           </div>
         </div>
       </div>
-
-      {/* ── New Invoice Modal ── */}
-      {showNewInvoiceModal && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-in fade-in zoom-in-95 duration-200">
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200">
-              <div className="flex items-center gap-2">
-                <Plus className="w-5 h-5 text-primary-600" />
-                <h2 className="text-lg font-semibold text-secondary-900">Create New Invoice</h2>
-              </div>
-              <button onClick={() => setShowNewInvoiceModal(false)} className="p-2 rounded-lg hover:bg-secondary-100 text-secondary-500 transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="px-6 py-5 space-y-5">
-              {/* Customer Search */}
-              <div>
-                <label className="block text-sm font-semibold text-secondary-700 mb-1.5">Customer <span className="text-red-500">*</span></label>
-                {newInvoiceSelectedCustomer ? (
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-primary-50 border border-primary-200">
-                    <div>
-                      <p className="font-semibold text-primary-900 text-sm">{newInvoiceSelectedCustomer.name || "Unknown"}</p>
-                    </div>
-                    <button
-                      onClick={() => { setNewInvoiceSelectedCustomer(null); setNewInvoiceCustomerSearch(""); setNewInvoiceCustomers([]); }}
-                      className="text-xs text-primary-600 hover:text-primary-800 font-medium underline"
-                    >
-                      Change
-                    </button>
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
-                    <input
-                      type="text"
-                      placeholder="Search by name, email, phone..."
-                      className="input pl-9 pr-4 w-full text-sm"
-                      value={newInvoiceCustomerSearch}
-                      onChange={(e) => handleNewInvoiceCustomerSearch(e.target.value)}
-                      autoFocus
-                    />
-                    {newInvoiceSearchLoading && (
-                      <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-secondary-400" />
-                    )}
-                    {newInvoiceCustomers.length > 0 && (
-                      <div className="absolute z-10 w-full mt-1 bg-white border border-secondary-200 rounded-xl shadow-xl max-h-52 overflow-y-auto">
-                        {newInvoiceCustomers.map((c) => (
-                          <button
-                            key={c.customer_id}
-                            className="w-full text-left px-4 py-3 hover:bg-primary-50 transition-colors border-b border-secondary-100 last:border-0"
-                            onClick={() => { setNewInvoiceSelectedCustomer({ customer_id: c.customer_id, name: c.name }); setNewInvoiceCustomers([]); setNewInvoiceCustomerSearch(""); }}
-                          >
-                            <p className="font-medium text-sm text-secondary-900">{c.name || "No Name"}</p>
-                            <p className="text-xs text-secondary-500">{c.email || c.phone || c.customer_id}</p>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {newInvoiceCustomerSearch.trim() && !newInvoiceSearchLoading && newInvoiceCustomers.length === 0 && (
-                      <p className="text-xs text-secondary-400 mt-1 pl-1">No customers found</p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Invoice Date */}
-              <div>
-                <label className="block text-sm font-semibold text-secondary-700 mb-1.5">Invoice Date <span className="text-red-500">*</span></label>
-                <input
-                  type="date"
-                  className="input w-full text-sm"
-                  value={newInvoiceDate}
-                  onChange={(e) => setNewInvoiceDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-secondary-200 bg-secondary-50 rounded-b-2xl">
-              <button onClick={() => setShowNewInvoiceModal(false)} className="btn-secondary text-sm px-5">
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateInvoice}
-                disabled={newInvoiceSubmitting || !newInvoiceSelectedCustomer}
-                className="btn-primary text-sm px-5 flex items-center gap-2 disabled:opacity-50"
-              >
-                {newInvoiceSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                {newInvoiceSubmitting ? "Creating..." : "Create Invoice"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

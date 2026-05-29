@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { syncPaymentsFromBubble } from "@/lib/bubble";
 import { calculateEppCost, getEppRate } from "@/lib/epp-rates";
 import { getUser } from "@/lib/auth";
+import { syncInvoiceWithFullIntegrity } from "@/lib/integrity-sync";
 
 /**
  * Log a payment event into invoice_audit_log, linked to the invoice.
@@ -381,7 +382,7 @@ export async function getInvoiceDetailsByBubbleId(bubbleId: string) {
     const numericId = parseInt(bubbleId);
     const isNumeric = !isNaN(numericId) && /^\d+$/.test(bubbleId);
 
-    const invoice = await db.query.invoices.findFirst({
+    let invoice = await db.query.invoices.findFirst({
       where: isNumeric
         ? or(eq(invoices.bubble_id, bubbleId), eq(invoices.invoice_id, numericId))
         : eq(invoices.bubble_id, bubbleId),
@@ -389,6 +390,19 @@ export async function getInvoiceDetailsByBubbleId(bubbleId: string) {
 
     if (!invoice) {
       return null;
+    }
+
+    // Always pull the latest data from Bubble for this invoice on load
+    if (invoice.bubble_id) {
+      try {
+        await syncInvoiceWithFullIntegrity(invoice.bubble_id, { force: true, skipUsers: true, skipAgents: true });
+        // Re-query the updated invoice details from the local DB
+        invoice = await db.query.invoices.findFirst({
+          where: eq(invoices.id, invoice.id),
+        }) || invoice;
+      } catch (syncError) {
+        console.error("Auto-sync on invoice load by bubble_id failed:", syncError);
+      }
     }
 
     // Fetch linked items using linked_invoice column in invoice_items table

@@ -12,7 +12,9 @@
       "Bash(node scripts/analyze-db.js:*)",
       "Bash(node scripts/analyze-relations:*)",
       "Bash(npx tsc:*)",
-      "Bash(node scripts/analyze-seda-links:*)"
+      "Bash(node scripts/analyze-seda-links:*)",
+      "Bash(node scripts/copy-db.js:*)",
+      "Bash(node scripts/copy-db.js)"
     ]
   }
 }
