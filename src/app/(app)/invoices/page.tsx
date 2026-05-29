@@ -537,7 +537,7 @@ function InvoicesContent() {
                         </div>
                       </td>
                       <td>
-                        <div className="font-medium text-secondary-700">
+                        <div className="font-medium text-secondary-700 uppercase">
                           {version === "v1" ? inv.linked_customer : inv.customer_name_snapshot || "N/A"}
                         </div>
                       </td>

@@ -204,7 +204,7 @@ export default function CustomersPage() {
                 customers.map((customer) => (
                   <tr key={customer.id}>
                     <td>
-                      <div className="font-semibold text-secondary-900">{customer.name}</div>
+                      <div className="font-semibold text-secondary-900 uppercase">{customer.name}</div>
                       <div className="text-xs text-secondary-500">{customer.customer_id}</div>
                     </td>
                     <td>
@@ -474,7 +474,7 @@ export default function CustomersPage() {
                             <div className="grid grid-cols-2 gap-4 text-sm">
                               <div>
                                 <p className="text-secondary-500 mb-1 uppercase text-[10px] font-bold tracking-wider">Name</p>
-                                <p className="text-secondary-900 font-medium">{record.name}</p>
+                                <p className="text-secondary-900 font-medium uppercase">{record.name}</p>
                               </div>
                               <div>
                                 <p className="text-secondary-500 mb-1 uppercase text-[10px] font-bold tracking-wider">Phone</p>
@@ -568,7 +568,7 @@ export default function CustomersPage() {
                             }`}>
                               {record.change_operation || 'UPDATE'}
                             </span>
-                            <span className="text-sm font-bold text-secondary-900">
+                            <span className="text-sm font-bold text-secondary-900 uppercase">
                               {record.name}
                             </span>
                             <span className="text-xs text-secondary-500">
