@@ -561,14 +561,14 @@ export const INVOICE_TEMPLATE_HTML = `
       const replacements = {
         '{{INVOICE_NUMBER}}': soNumber,
         '{{COMPANY_NAME}}': template.company_name || 'Atap Solar',
-        '{{COMPANY_ADDRESS}}': template.company_address || '',
+        '{{COMPANY_ADDRESS}}': (template.company_address || '').toUpperCase(),
         '{{COMPANY_PHONE}}': template.company_phone || '',
         '{{COMPANY_EMAIL}}': template.company_email || '',
         '{{LOGO_URL}}': template.logo_url || '/logo-08.png',
         '{{STATUS}}': invoiceData.status || 'Draft',
         '{{INVOICE_DATE}}': formatDate(invoiceData.invoice_date),
-        '{{CUSTOMER_NAME}}': invoiceData.customer_name_snapshot || 'Valued Customer',
-        '{{CUSTOMER_ADDRESS}}': invoiceData.customer_address_snapshot || '',
+        '{{CUSTOMER_NAME}}': (invoiceData.customer_name_snapshot || 'Valued Customer').toUpperCase(),
+        '{{CUSTOMER_ADDRESS}}': (invoiceData.customer_address_snapshot || '').toUpperCase(),
         '{{CUSTOMER_PHONE}}': invoiceData.customer_phone_snapshot || '',
         '{{CUSTOMER_EMAIL}}': invoiceData.customer_email_snapshot || '',
         '{{SUBTOTAL}}': formatCurrency(subtotal),
@@ -581,7 +581,7 @@ export const INVOICE_TEMPLATE_HTML = `
         '{{BANK_ACCOUNT_NO}}': customerBankAccountNo,
         '{{BANK_ACCOUNT_NAME}}': customerBankAccountName,
         '{{TERMS}}': template.terms_and_conditions || '',
-        '{{CREATED_BY}}': invoiceData.created_by_user_name || 'System'
+        '{{CREATED_BY}}': (invoiceData.created_by_user_name || 'System').toUpperCase()
       };
 
       let html = document.body.innerHTML;

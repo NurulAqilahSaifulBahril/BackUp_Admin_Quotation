@@ -425,12 +425,12 @@ export const QUOTATION_TEMPLATE_HTML = `
         '{{COMPANY_ADDRESS}}': '23-01, JALAN MUTIARA EMAS 10/19,\\nTAMAN MOUNT AUSTIN, 81100 JOHOR BAHRU,\\nJOHOR DARUL TA\\'ZIM',
         '{{LOGO_URL}}': template.logo_url || '/logo-08.png',
         '{{INVOICE_DATE}}': formatDate(invoiceData.invoice_date),
-        '{{CUSTOMER_NAME}}': invoiceData.customer_name_snapshot || 'Valued Customer',
-        '{{CUSTOMER_ADDRESS}}': invoiceData.customer_address_snapshot || '',
+        '{{CUSTOMER_NAME}}': (invoiceData.customer_name_snapshot || 'Valued Customer').toUpperCase(),
+        '{{CUSTOMER_ADDRESS}}': (invoiceData.customer_address_snapshot || '').toUpperCase(),
         '{{CUSTOMER_PHONE}}': invoiceData.customer_phone_snapshot || '',
         '{{CUSTOMER_EMAIL}}': invoiceData.customer_email_snapshot || '',
         '{{TOTAL_AMOUNT}}': formatCurrency(invoiceData.total_amount),
-        '{{CREATED_BY}}': invoiceData.created_by_user_name || 'System'
+        '{{CREATED_BY}}': (invoiceData.created_by_user_name || 'System').toUpperCase()
       };
 
       var html = document.body.innerHTML;

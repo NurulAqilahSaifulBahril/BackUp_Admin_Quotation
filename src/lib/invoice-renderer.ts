@@ -31,18 +31,23 @@ export function getInvoiceHtml(invoiceData: any): string {
   const customerBankAccountNo = custData.bank_account_no || (firstPaymentWithBank && firstPaymentWithBank.bank_account_no) || custData.ic_number || '';
   const customerBankAccountName = custData.bank_account_name || custData.name || invoiceData.customer_name_snapshot || '';
 
+  const companyAddress = (template.company_address || '').toUpperCase();
+  const customerName = (invoiceData.customer_name_snapshot || 'Valued Customer').toUpperCase();
+  const customerAddress = (invoiceData.customer_address_snapshot || '').toUpperCase();
+  const createdBy = (invoiceData.created_by_user_name || 'System').toUpperCase();
+
   const replacements: Record<string, string | number> = {
     '{{INVOICE_NUMBER}}': invoiceData.invoice_number || 'N/A',
     '{{COMPANY_NAME}}': template.company_name || 'Atap Solar',
-    '{{COMPANY_ADDRESS}}': template.company_address || '',
+    '{{COMPANY_ADDRESS}}': companyAddress,
     '{{COMPANY_PHONE}}': template.company_phone || '',
     '{{COMPANY_EMAIL}}': template.company_email || '',
     '{{LOGO_URL}}': template.logo_url || 'https://admin.atap.solar/logo-08.png', // Fallback to absolute URL if possible
     '{{STATUS}}': invoiceData.status || 'Draft',
     '{{INVOICE_DATE}}': formatDate(invoiceData.invoice_date),
     '{{DUE_DATE}}': invoiceData.due_date || '',
-    '{{CUSTOMER_NAME}}': invoiceData.customer_name_snapshot || 'Valued Customer',
-    '{{CUSTOMER_ADDRESS}}': invoiceData.customer_address_snapshot || '',
+    '{{CUSTOMER_NAME}}': customerName,
+    '{{CUSTOMER_ADDRESS}}': customerAddress,
     '{{CUSTOMER_PHONE}}': invoiceData.customer_phone_snapshot || '',
     '{{CUSTOMER_EMAIL}}': invoiceData.customer_email_snapshot || '',
     '{{SUBTOTAL}}': formatCurrency(subtotal),
@@ -55,7 +60,7 @@ export function getInvoiceHtml(invoiceData: any): string {
     '{{BANK_ACCOUNT_NO}}': customerBankAccountNo,
     '{{BANK_ACCOUNT_NAME}}': customerBankAccountName,
     '{{TERMS}}': template.terms_and_conditions || '',
-    '{{CREATED_BY}}': invoiceData.created_by_user_name || 'System'
+    '{{CREATED_BY}}': createdBy
   };
 
   // 1. Initial string replacement for simple placeholders
