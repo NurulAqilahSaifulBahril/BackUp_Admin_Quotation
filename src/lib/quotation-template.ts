@@ -141,7 +141,9 @@ export const QUOTATION_TEMPLATE_HTML = `
       #note-section,
       #note-section *,
       #terms-section,
-      #terms-section * {
+      #terms-section *,
+      #prepared-by-section,
+      #prepared-by-section * {
         color: #000000 !important;
       }
       
@@ -321,7 +323,6 @@ export const QUOTATION_TEMPLATE_HTML = `
           </div>
           <div style="border-bottom: 1px dashed #000; width: 180px; margin-bottom: 4px;"></div>
           <div style="font-size: 10px; color: #475569; font-weight: 600;">Authorized Signature</div>
-          <div style="font-size: 10px; color: #475569; margin-top: 2px;">Name: {{CREATED_BY}}</div>
         </td>
         <!-- Customer Signature (Right) -->
         <td style="width: 50%; border: none; padding: 0 0 0 16px; vertical-align: top;">
@@ -334,6 +335,10 @@ export const QUOTATION_TEMPLATE_HTML = `
         </td>
       </tr>
     </table>
+
+    <div id="prepared-by-section" style="font-size: 10px; color: #475569; margin-top: 12px; margin-bottom: 12px;">
+      Prepared by: <span style="font-weight: 600; color: #000;">{{CREATED_BY}}</span>
+    </div>
 
 
     <!-- Footer -->
