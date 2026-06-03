@@ -337,7 +337,7 @@ export const QUOTATION_TEMPLATE_HTML = `
     </table>
 
     <div id="prepared-by-section" style="font-size: 10px; color: #475569; margin-top: 12px; margin-bottom: 12px;">
-      Prepared by: <span style="font-weight: 600; color: #000;">{{CREATED_BY}}</span>
+      Quotation by: <span style="font-weight: 600; color: #000;">{{CREATED_BY}}</span>
     </div>
 
 

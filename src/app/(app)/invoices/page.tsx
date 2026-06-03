@@ -542,7 +542,7 @@ function InvoicesContent() {
                         </div>
                       </td>
                       <td>
-                        <div className="text-secondary-600">
+                        <div className="text-secondary-600 uppercase">
                           {inv.invoice_by_user_name || inv.agent_name || (version === "v1" ? inv.dealercode : "N/A")}
                         </div>
                       </td>
